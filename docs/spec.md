@@ -1,6 +1,6 @@
 # Lush 命令语言规范
 
-版本 0.1 · 状态：可实施草案
+版本 0.2 · 状态：可实施草案
 
 ---
 
@@ -25,13 +25,15 @@ Lush 是一门嵌入 C++ 宿主的命令语言，目标场景是 AutoCAD 式的�
 | D05 | 引入 `h = ref f`，引用只能指向变量；赋值永远重绑定；整值写穿透用 `*h = v` |
 | D06 | int64 + double；`2/4 == 0`，`2/4.0 == 0.5` |
 | D07 | 块引入作用域；`for` 的循环变量出循环即失效 |
-| D08 | 调用写法由**位置**决定：语句位置 = 并置命令，表达式位置 = 括号函数调用 |
+| D08 | 调用写法由**位置**决定：语句位置 = 并置命令，表达式位置 = 后缀 `(...)` 调用 |
 | D09 | 命令参数按**顶层空白**切词；一元运算符必须贴身；因此 `line a - b` 是语法错误 |
 | D10 | `(x,y)` 是 Point 字面量；`[...]` 是 list 字面量；裸 `x,y` 只在命令参数位置作为糖 |
-| D11 | 命令与函数共用一张可调用体注册表；命令无返回值，函数有返回值 |
+| D11 | 命令与函数共用一张可调用体注册表；函数与类型构造器是一等值，命令不是值 |
 | D12 | 交互式会话只允许出现在 REPL 的顶层单条命令语句；脚本必须写全参数 |
 | D13 | v1 不实现 `def`/`return`，但保留关键字 |
 | D14 | 脚本先整体解析与校验，再执行；运行时错误立即中止 |
+| D15 | `type(v)` 返回对应类型的可调用构造器；`type(4.4)(2)` 等价于 `double(2)` |
+| D16 | 内建函数、类型构造器、`type` 本身都是 callable 值；命令不是值 |
 
 ### 0.2 目录
 
@@ -53,6 +55,10 @@ Lush 是一门嵌入 C++ 宿主的命令语言，目标场景是 AutoCAD 式的�
 16. EBNF 汇总
 17. 待定与后续
 
+### 0.3 本版变更
+
+- 0.2：`type(v)` 改为返回可调用类型值；内建函数成为一等值；调用改为后缀 `(...)`；新增 `bool`/`list` 构造器与错误码 R012；精确化 INT64_MIN 的字面量折叠规则。
+
 ---
 
 ## 1. 范围与非目标
@@ -69,7 +75,7 @@ Lush 是一门嵌入 C++ 宿主的命令语言，目标场景是 AutoCAD 式的�
 ### 1.2 非目标（v1）
 
 - Qt、图形、文件、网络、插件加载；
-- 用户自定义函数、闭包、异常、模块；
+- 用户自定义函数、闭包、lambda、异常、模块（内建函数与类型构造器是一等值，但不是用户可定义的）；
 - 多行字符串、正则、字符串插值；
 - 类型标注与静态类型检查；
 - 增量解析与 IDE 级错误恢复（v1 首个错误即中止）；
@@ -167,7 +173,24 @@ if  else  while  for  in  true  false  ref  break  continue  def  return
 - `1.`、`.5`、`1e` 非法（L004）；
 - 不支持十六进制、下划线分隔；
 - 字面量不带符号，负号是单目运算符；
-- 单目 `-` 直接作用于整数字面量时在解析期折叠并检查范围，因此 `-9223372036854775808` 合法，单独的 `9223372036854775808` 是 L004。
+- 十进制整数的**绝对值**必须 ≤ `2^63`；`> 2^63` 直接 L004。
+
+**INT64_MIN 的折叠规则**
+
+int64 的正负范围不对称（`[-2^63, 2^63-1]`），而语言没有负数字面量，所以 `2^63` 这个"刚好越界"的字面量必须特殊处理：
+
+1. 词法：绝对值等于 `2^63` 时产生一个**边界字面量**标记，不立即报错；
+2. 语法：边界字面量只有在**（可带括号的）单目 `-` 的直接操作数**位置才折叠为 INT64_MIN；
+3. 其它任何位置 → L004。
+
+```lush
+-9223372036854775808      # INT64_MIN
+-(9223372036854775808)    # INT64_MIN
+ 9223372036854775808      # L004
+0 - 9223372036854775808   # L004（二元减法不折叠）
+-9223372036854775809      # L004
+--9223372036854775808     # 内层 INT64_MIN，外层取负溢出 → R005
+```
 
 ### 2.7 字符串字面量
 
@@ -252,7 +275,7 @@ NL | ; | } | else | EOF
 | 6 | `+` `-` | 左结合 |
 | 7 | `*` `/` `%` | 左结合 |
 | 8 | 前缀 `-` `!` `*` `++` `--` | 右结合 |
-| 9 | 后缀 `[expr]` `.IDENT` `++` `--` | 左结合 |
+| 9 | 后缀 `[expr]` `.IDENT` `(args)` `++` `--` | 左结合 |
 | 10 | 原子 | — |
 
 - `*` 在第 7 级是乘法，在第 8 级是解引用；由位置区分。
@@ -260,20 +283,21 @@ NL | ; | } | else | EOF
 - `++` / `--` 的操作数必须是可赋值目标。
 - 赋值不是表达式：`a = b = c` 非法。
 - 三元只求值被选中的分支。
+- **所有后缀运算符必须紧贴左操作数**：`a[0]`、`p.x`、`f(x)`、`i++` 合法；`a [0]`、`p .x`、`f (x)`、`i ++` 都不构成后缀运算。
+- **调用是后缀**：任意表达式紧贴 `(` 即可调用；callee 必须是 callable，否则 R012。
 
 原子：
 
 - `INT`、`FLOAT`、`STRING`、`true`、`false`
-- `IDENT`（变量）
-- `IDENT ( args )`：函数调用，**`(` 必须紧贴 IDENT**（中间不能有空白）
+- `IDENT`：变量；若该名字是已注册的函数/类型构造器，则是 callable 值；若是命令名 → S008
 - `( expr )`：分组
 - `( expr , expr [ , expr ] )`：Point 字面量（2 或 3 个坐标）
 - `[ [expr {, expr}] ]`：list 字面量
 
 调用括号与 Point 括号的区分：
 
-> **调用括号内，顶层逗号是参数分隔符；其他位置的 `(a,b)` 是 Point。**
-> 因此 `f(1,2)` 是 2 个参数，`f((1,2))` 才是 1 个 Point 参数。
+> **调用是后缀：callee 紧贴 `(`。调用括号内，顶层逗号是参数分隔符；其他位置的 `(a,b)` 是 Point。**
+> `f(1,2)` 是 2 个参数；`f((1,2))` 是 1 个 Point 参数；`type(4.4)(2)` 先取 `double` 再调用它。
 
 ### 3.4 命令参数：切词规则
 
@@ -298,7 +322,7 @@ IDENT word*
 - `line a+b c` → 两个词；
 - `line a - b` → 三个词 `a`、`-`、`b`，`-` 无法构成表达式 → 语法错误 P004；
 - 在参数顶层，一元运算符必须紧贴操作数，所以 `line -1 -2` 是 `-1` 与 `-2` 两个词；括号内允许 `(- 1)`；
-- 函数调用必须 `f(x)`；`f (x)` 在参数位置是两个词，在表达式位置是语法错误；
+- 调用必须紧贴：`f(x)`、`type(1)(2)`；`f (x)` 在参数位置是两个词，在表达式位置是语法错误；
 - 参数里的复杂表达式请整体加括号，括号内空白随意：`line (a + b, c) (d, e)`。
 
 **注意**：命令名与第一个词可以紧邻，`line(1,2)` 等价于 `line (1,2)`：语句位置没有调用语法，`(` 只是第一个词的开始。
@@ -310,9 +334,11 @@ IDENT word*
 ```
 barePoint = simple ( "," simple ){1,2}
 simple    = "-"? atom suffix*
-atom      = INT | FLOAT | IDENT [ "(" [args] ")" ] | "(" expr ")"
-suffix    = "[" expr "]" | "." IDENT
+atom      = INT | FLOAT | IDENT | "(" expr ")"
+suffix    = "[" expr "]" | "." IDENT | "(" [args] ")"
 ```
+
+后缀同样必须紧贴：`f(1,2),3` 是一个裸坐标（第一维是调用结果），`f (1,2),3` 会被空白切词。
 
 - 坐标个数必须是 2 或 3；
 - 逗号两侧不能有空白（空白会先切词）；
@@ -355,10 +381,12 @@ suffix    = "[" expr "]" | "." IDENT
 
 在**表达式位置**：
 
-- `IDENT` 后紧跟 `(` → 函数调用；
-- `IDENT` → 变量；
+- 任意表达式后紧跟 `(` → 调用；callee 必须是 callable（否则 R012）；
+- `IDENT` → 变量；若该名字是已注册的函数/类型构造器，则是 callable 值；若是命令名 → S008；
 - `(` → Point 或分组（看顶层逗号个数）；
 - `[` → list。
+
+调用可以链式：`type(4.4)(2)` 解析为 `(type(4.4))(2)`；中间有空白则不是调用（`type(4.4) (2)` → P001）。
 
 路径必须"连续"这一条很重要：`p.x = 5` 是赋值，`p .x = 5` 不是（第二个 token 有前导空白，路径在 `p` 处结束，随后不是 `=`，于是按命令解析并报错）。
 
@@ -416,10 +444,13 @@ line 0,0 1,1
 | `string` | UTF-8 字符串，按码点索引 |
 | `list` | 异构、可变、值语义 |
 | `point` | 2 或 3 维，坐标恒为 double |
+| `type` | 可调用值（函数/类型构造器）的类型；`type` 本身也是 callable |
 
 `ref` 不是一等类型：它只能作为变量的当前内容存在，不能进入 list、Point、命令参数或返回值（见 4.5）。
 
 `void` 只描述"没有返回值"，不是值。
+
+`type` 既是可调用值的类型名，也是一个内建 callable（返回参数的类型构造器）。`int`、`double`、`bool`、`string`、`list`、`point`、`type`、`len` 都是 callable 值；其中前六个是数据类型的构造器，`type` 是元类型兼查询函数，`len` 是普通函数。callable 值可以存入变量/list、作为 `ref` 目标、作为命令的 `any` 参数，但不能参与算术或大小比较（见 4.7）。
 
 ### 4.2 Point
 
@@ -442,7 +473,8 @@ line 0,0 1,1
 - 读取变量：拷贝其值（深拷贝）；
 - 读取 `a[i]`：拷贝该元素；
 - 赋值、命令/函数参数绑定、list/Point 字面量构造：都发生拷贝；
-- 因此 `h = f` 之后修改 `h` 不影响 `f`；嵌套 list 同样独立。
+- 因此 `h = f` 之后修改 `h` 不影响 `f`；嵌套 list 同样独立；
+- callable 值（类型为 `type`）不可变，拷贝等价于复制引用（身份不变）。
 
 `ref` 是唯一的别名机制。
 
@@ -483,7 +515,7 @@ h = ref f
 其他规则：
 
 - 引用不是一等值：`echo h`、`h + 1`、`f(h)`、`[h]` 都先解引用；
-- `type(h)` 返回被引用值的类型，永远不返回 `ref`；
+- `type(h)` 返回被引用值的类型构造器，永远不返回 `ref`；
 - 引用持有 cell 的所有权，因此局部变量离开作用域不会悬空；
 - `for i in` 每轮创建**新 cell**，引用可安全逃逸到循环外；
 - C 风格 `for(i=...)` 的 `i` 在整个循环期间是**同一个 cell**，引用会看到最终值。
@@ -495,7 +527,7 @@ h = ref f
 1. `int → double`：混合数值运算、写入 Point 分量、绑定 `number` 参数、`point(...)` 构造。
 2. `list → point`：仅发生在**期望 Point 的位置**（命令/函数参数声明为 `point`，或 `point(v)` 的单参数形式）。要求长度 2 或 3，且每个元素是 int/double；全部转成 double，否则 R006。
 
-不存在 `bool ↔ int`、`string ↔ number`、`point ↔ list`（后者只能显式 `point(v)` 或参数绑定）。
+不存在 `bool ↔ int`、`string ↔ number`、`point ↔ list`（后者只能显式 `point(v)` 或参数绑定）。callable 不参与任何隐式转换。
 
 赋值不转换：`p = [1,2]` 之后 `p` 仍是 list。
 
@@ -508,13 +540,14 @@ h = ref f
 - string 按码点逐位比较；
 - Point 要求同维度，逐坐标比较；
 - list 要求同长度，逐元素递归比较；
+- callable 按**身份**比较：`type(4.4) == double` 为 true，`type(1) == double` 为 false；
 - 其它跨类型比较 → R002。
 
 `<` `<=` `>` `>=`：
 
 - 数值之间；
 - string 之间按码点字典序；
-- bool、list、Point → R002。
+- bool、list、Point、callable → R002。
 
 ### 4.8 真值
 
@@ -542,7 +575,7 @@ h = ref f
 | `a % b` | int/int | 截断余数，符号随被除数 |
 | `++` / `--` | int 可赋值目标 | 前缀返回新值，后缀返回旧值 |
 
-不允许：point 与标量相加、point 乘 point、point 取模、list 参与任何算术。
+不允许：point 与标量相加、point 乘 point、point 取模、list 参与任何算术、callable 参与任何算术或大小比较（只允许 `==`/`!=`）。
 
 整数除法向零截断：`-3/2 == -1`。任何除零（含 `0.0`）→ R004。
 
@@ -656,7 +689,7 @@ for (i = 0; i < n; i++) stmt
 - 名称按大小写不敏感查找注册表；
 - 参数按 3.4 切词并求值，从左到右；
 - 再按参数的声明类型做绑定转换（7.2）；
-- 命令无返回值，函数有返回值（作为语句调用时丢弃）；
+- 函数有返回值（作为语句调用时丢弃）；函数名在表达式位置是 callable 值；
 - 未注册的名字 → S001；
 - 参数个数不符 → S002；交互命令缺参且不满足会话条件 → S006；
 - 命令不能出现在表达式位置 → S008。
@@ -696,6 +729,7 @@ ParamSpec {
 - 变参必须是最后一个参数，且不能再有可选参数；
 - 默认值必须能通过该参数的类型绑定；
 - 注册应在执行脚本/开始会话之前完成；脚本内不能注册。
+- `returns = value` 的可调用体有值形态（callable）；`returns = void` 的命令只能作为语句，没有值形态。
 
 ### 7.2 参数绑定与转换
 
@@ -708,7 +742,7 @@ ParamSpec {
 | `string` | string | string |
 | `bool` | bool | bool |
 | `list` | list | list |
-| `any` | 除 void/ref 外任意 | 原值 |
+| `any` | 除 void/ref 外任意（含 callable） | 原值 |
 
 其余情况 → R002（带参数名与期望类型）。
 
@@ -763,9 +797,10 @@ LINE (0, 0) (1, 1)
 
 命令与函数共用一张可调用体注册表；变量存放在独立的作用域链中。语法位置决定调用写法：
 
-- 语句位置：`name arg arg ...` 解析为可调用体；
-- 表达式位置：`name(...)` 解析为函数调用；
-- 变量名不得与已注册名称冲突（S003）。
+- 语句位置：`name arg arg ...` 解析为可调用体，返回值（若有）丢弃；
+- 表达式位置：`name(...)` 是调用；裸 `name` 若是函数名则是 callable 值，若是命令名 → S008，否则是变量；
+- 变量名不得与已注册名称冲突（S003）；
+- 类型构造器与内建函数是一等值，可存入变量/list，可作为参数传递。
 
 ### 7.6 参考宿主（仅用于测试）
 
@@ -787,18 +822,40 @@ LINE (0, 0) (1, 1)
 
 ## 8. 内建
 
-### 8.1 函数
+### 8.1 函数（一等 callable）
+
+以下都是 callable 值，可以存进变量/list、作为参数传递；它们的类型都是 `type`。
 
 | 名称 | 签名 | 说明 |
 |---|---|---|
-| `point` | `(v)` / `(x,y)` / `(x,y,z)` | 由 list/Point 复制，或由数值构造 |
-| `len` | `(list\|string\|point)` | list 长度、string 码点数、point 维度 |
-| `str` | `(any)` | 按第 9 节格式化为 string |
 | `int` | `(int\|double)` | double 向零截断；越界 R005 |
 | `double` | `(int\|double)` | int 提升（可能丢精度） |
-| `type` | `(any)` | 返回 `int` / `double` / `bool` / `string` / `list` / `point` |
+| `bool` | `(bool\|int\|double\|string\|list)` | 显式真值转换：`0`/`0.0`/`""`/`[]` → false；非空 → true；Point → R002 |
+| `string` | `(any)` | 按第 9 节格式化为 string；`str` 是同一 callable 的别名 |
+| `list` | `(list\|string\|point)` | list 深拷贝；string 逐码点；point 取坐标；其它 R002 |
+| `point` | `(v)` / `(x,y)` / `(x,y,z)` | 由 list/Point 复制，或由数值构造 |
+| `type` | `(any)` | 返回该值的类型构造器；callable → `type` |
+| `len` | `(list\|string\|point)` | list 长度、string 码点数、point 维度 |
+
+`type` 的返回值就是对应的 callable 本身：
+
+```lush
+type(4.4) == double      # true
+type(4.4)(2)             # 2.0
+type(1) == int           # true
+type("a") == string      # true
+type(true) == bool       # true
+type([1]) == list        # true
+type((1,2)) == point     # true
+type(len) == type        # true
+type(type) == type       # true
+```
+
+`bool(v)` 是**显式转换**，不改变 4.8 的规则：`if (0)` 仍然 R002，必须写 `if (bool(0))`。
 
 `point(v)` 中 `v` 为 list 时执行 4.6 的 `list → point` 转换。
+
+`str(v)` 与 `string(v)` 是同一个 callable；规范文本使用 `string`，`str` 仅作为别名保留。
 
 ### 8.2 命令
 
@@ -810,7 +867,7 @@ LINE (0, 0) (1, 1)
 
 ## 9. 格式化
 
-`str(v)` 与 `echo` 使用同一套格式：
+`string(v)`（别名 `str(v)`）与 `echo` 使用同一套格式：
 
 | 类型 | 格式 | 示例 |
 |---|---|---|
@@ -820,6 +877,7 @@ LINE (0, 0) (1, 1)
 | string | 顶层原样；嵌套加引号并转义 | `abc`、`["a", "b"]` |
 | point | `(x, y)` 或 `(x, y, z)` | `(1, 2)` |
 | list | `[a, b, c]`，空为 `[]` | `[1, [2, 3]]` |
+| callable（`type` 值） | callable 的名字 | `int`、`double`、`len` |
 
 - `echo a b c` 输出 `a b c\n`；
 - `echo` 对 string 参数输出原文（不含引号）；
@@ -885,7 +943,7 @@ LINE (0, 0) (1, 1)
 | 校验 | S005 | break/continue 不在循环内 |
 | 校验 | S006 | 交互命令必须是顶层单条语句 |
 | 校验 | S007 | def/return 尚未实现 |
-| 校验 | S008 | 命令不能用于表达式 |
+| 校验 | S008 | 命令没有值形态，不能用于表达式 |
 | 运行时 | R001 | 未定义变量 |
 | 运行时 | R002 | 类型不匹配 |
 | 运行时 | R003 | 索引越界 |
@@ -897,6 +955,7 @@ LINE (0, 0) (1, 1)
 | 运行时 | R009 | 浮点 NaN/Inf |
 | 运行时 | R010 | 命令执行失败（宿主） |
 | 运行时 | R011 | 用户取消 |
+| 运行时 | R012 | 值不可调用（callee 不是 callable） |
 
 ### 11.2 格式
 
@@ -925,21 +984,21 @@ error[P004]: 命令参数不是合法的表达式
 | 光标位置 | 候选 |
 |---|---|
 | 语句开头 | 关键字、可见变量、已注册命令/函数 |
-| `if (` / `while (` / `for (` 内 | 表达式：可见变量、函数、字面量 |
-| 命令参数第 k 个 | 按 `params[k]` 的类型/维度过滤可见变量；附 `hint` |
+| 表达式位置 | 可见变量、callable（函数/类型构造器）、字面量 |
+| 命令参数第 k 个 | 按 `params[k]` 的类型/维度过滤可见变量；`any` 参数额外列出 callable；附 `hint` |
 | `for i in ` | 可迭代表达式 |
 | `[` 或 `[expr,` 内 | 表达式 |
 | `(` 内（Point/分组） | 表达式 |
-| `f(` 内 | 该函数的参数类型约束 |
-| `IDENT.` 后 | 该类型的成员：`point` → `x/y/z`；`list`/`string` → `length` |
+| `f(` / `t(` 内 | 该 callable 的参数类型约束 |
+| `.` 后 | `point` → `x/y/z`；`list`/`string` → `length`；callable → 无成员 |
 | 会话中 | 当前缺失参数的类型/维度，附 `prompt` |
 
 ### 12.2 匹配与插入
 
-- 关键字、命令/函数名：大小写不敏感前缀匹配；
+- 关键字、命令/函数/类型构造器名：大小写不敏感前缀匹配；
 - 变量：大小写敏感前缀匹配；
 - 命令参数位置：类型不匹配的变量可降权但仍显示（附类型标签）；
-- 候选携带：插入文本、类型、来源（keyword/command/variable/member）、详情；
+- 候选携带：插入文本、类型、来源（keyword/command/function/type/variable/member）、签名或详情；
 - 补全不得改变语义：在 `line 1,2 ` 处应建议 Point 类型变量与 `(`，而不是数字。
 
 ### 12.3 提示（非补全）
@@ -953,7 +1012,7 @@ error[P004]: 命令参数不是合法的表达式
 ## 13. 保留与未实现
 
 - 关键字 `def` / `return` 保留；出现即报 S007。
-- 未来扩展方向：用户函数、模块、异常、插件注册、写时复制、增量解析、错误恢复。
+- 未来扩展方向：用户函数（复用现有 callable 值模型）、模块、异常、插件注册、写时复制、增量解析、错误恢复。
 - 明确不加：`as` 后缀转换、隐式数值字符串转换、多行字符串、块注释。
 
 ---
@@ -1003,10 +1062,10 @@ echo 2*3+4
 ### G02 优先级与三元
 
 ```lush
-echo 1 + 2 * 3
-echo (1 + 2) * 3
-echo true ? "y" : "n"
-echo 1 < 2 && 2 < 3
+echo (1 + 2 * 3)
+echo ((1 + 2) * 3)
+echo (true ? "y" : "n")
+echo (1 < 2 && 2 < 3)
 ```
 
 ```text
@@ -1021,10 +1080,10 @@ true
 ```lush
 s = "a\tb"
 echo s
-echo "x" + "y"
+echo ("x" + "y")
 echo s[0]
 echo len("中文")
-echo "中" == "中"
+echo ("中" == "中")
 ```
 
 ```text
@@ -1106,7 +1165,7 @@ echo p[0]
 echo p.x
 p[1] = 9
 echo p
-echo p + (1,1)
+echo (p + (1,1))
 echo -p
 ```
 
@@ -1138,9 +1197,9 @@ echo len(q)
 
 ```lush
 p = (1,2)
-echo p * 2
-echo 2 * p
-echo p / 2
+echo (p * 2)
+echo (2 * p)
+echo (p / 2)
 ```
 
 ```text
@@ -1288,7 +1347,7 @@ LINE (3, 1) (6, 6)
 ```lush
 for i in [1,2] {
     for j in [1,2] {
-        echo i * 10 + j
+        echo (i * 10 + j)
     }
 }
 ```
@@ -1369,8 +1428,8 @@ error[R002] at 1:5: 条件必须是 bool，实际为 int
 ### G28 短路、除零、溢出
 
 ```lush
-echo false && (1/0) > 0
-echo true || (1/0) > 0
+echo (false && (1/0) > 0)
+echo (true || (1/0) > 0)
 echo 1/0
 ```
 
@@ -1381,11 +1440,11 @@ error[R004] at 3:6: 除零
 ```
 
 ```lush
-echo 9223372036854775807 + 1
+x = 9223372036854775807 + 1
 ```
 
 ```text
-error[R005] at 1:6: 整数溢出
+error[R005] at 1:25: 整数溢出
 ```
 
 ### G29 续行与注释
@@ -1472,7 +1531,7 @@ p = point [1,2]
 ```
 
 ```text
-error[P001] at 1:13: 意外的 token
+error[P001] at 1:11: 意外的 token
 help: 函数调用必须写成 point([1,2])
 ```
 
@@ -1512,6 +1571,208 @@ LINE (1, 1) (1, 1)
 LINE (2, 1) (1, 2)
 ```
 
+### G38 type 返回类型构造器
+
+```lush
+echo type(1)
+echo type(1.0)
+echo type("a")
+echo type(true)
+echo type([1])
+echo type((1,2))
+```
+
+```text
+int
+double
+string
+bool
+list
+point
+```
+
+### G39 类型构造器可调用
+
+```lush
+echo type(4.4)(2)
+echo type(1)(2.9)
+echo type(true)(0)
+echo type("x")(5)
+echo type([1])((2,3))
+echo type((1,2))([3,4])
+```
+
+```text
+2
+2
+false
+5
+[2, 3]
+(3, 4)
+```
+
+### G40 类型身份
+
+```lush
+echo (type(1) == int)
+echo (type(1) == double)
+echo (type(4.4) == double)
+echo (type(4.4) == type(2.0))
+echo (type(1) == type(2))
+```
+
+```text
+true
+false
+true
+true
+true
+```
+
+### G41 callable 可存储、可传递
+
+```lush
+t = type(1)
+echo t(2.5)
+echo (t == int)
+f = len
+echo f([1,2,3])
+echo [int, len]
+```
+
+```text
+2
+true
+3
+[int, len]
+```
+
+### G42 type 是元类型
+
+```lush
+echo type(len)
+echo type(int)
+echo type(type)
+echo type(type(1))
+echo (type(1) == type)
+```
+
+```text
+type
+type
+type
+type
+false
+```
+
+### G43 bool / list 构造器
+
+```lush
+echo bool(0)
+echo bool(1)
+echo bool(0.0)
+echo bool("")
+echo bool("x")
+echo bool([])
+echo bool([1])
+echo list("ab")
+echo list((1,2,3))
+```
+
+```text
+false
+true
+false
+false
+true
+false
+true
+["a", "b"]
+[1, 2, 3]
+```
+
+### G44 调用非 callable
+
+```lush
+p = (1,2)
+echo p(1,2)
+```
+
+```text
+error[R012] at 2:6: Point 不可调用
+```
+
+### G45 callable 不参与算术
+
+```lush
+echo (int + 1)
+```
+
+```text
+error[R002] at 1:11: callable 不能参与算术
+```
+
+### G46 表达式位置的并置不是调用
+
+```lush
+x = type(4.4) (2)
+```
+
+```text
+error[P001] at 1:15: 意外的 token
+help: 调用必须紧贴：type(4.4)(2)
+```
+
+（如果是 `echo type(4.4) (2)`，命令参数位置会把它们切成两个词，输出 `double 2`。）
+
+### G47 构造器拒绝错误类型
+
+```lush
+echo type(1)("x")
+```
+
+```text
+error[R002] at 1:14: int 不接受 string
+```
+
+### G48 链式调用到非 callable
+
+```lush
+echo type(4.4)(2)(3)
+```
+
+```text
+error[R012] at 1:18: double 不可调用
+```
+
+### G49 INT64_MIN 折叠
+
+```lush
+echo -9223372036854775808
+echo -(9223372036854775808)
+```
+
+```text
+-9223372036854775808
+-9223372036854775808
+```
+
+```lush
+echo 9223372036854775808
+```
+
+```text
+error[L004] at 1:6: 整数越界
+```
+
+```lush
+x = 0 - 9223372036854775808
+```
+
+```text
+error[L004] at 1:9: 整数越界
+```
+
 ---
 
 ## 16. EBNF 汇总
@@ -1548,8 +1809,8 @@ lvalue      = "*" IDENT
 word        = barePoint | expr ;                     (* 必须整词匹配 *)
 barePoint   = simple ( "," simple ){1,2} ;           (* 2 或 3 个坐标 *)
 simple      = "-"? atom suffix* ;
-atom        = INT | FLOAT | IDENT [ "(" [ expr { "," expr } ] ")" ] | "(" expr ")" ;
-suffix      = "[" expr "]" | "." IDENT ;
+atom        = INT | FLOAT | IDENT | "(" expr ")" ;
+suffix      = "[" expr "]" | "." IDENT | "(" [ expr { "," expr } ] ")" ;
 
 expr        = ternary ;
 ternary     = orExpr [ "?" expr ":" expr ] ;
@@ -1562,9 +1823,8 @@ mulExpr     = unary { ( "*" | "/" | "%" ) unary } ;
 unary       = ( "-" | "!" | "++" | "--" ) unary
             | "*" IDENT
             | postfix ;
-postfix     = primary { "[" expr "]" | "." IDENT | "++" | "--" } ;
+postfix     = primary { "[" expr "]" | "." IDENT | "(" [ expr { "," expr } ] ")" | "++" | "--" } ;
 primary     = INT | FLOAT | STRING | "true" | "false"
-            | IDENT "(" [ expr { "," expr } ] ")"   (* "(" 必须紧贴 IDENT *)
             | IDENT
             | "(" expr ")"
             | "(" expr "," expr [ "," expr ] ")"
@@ -1573,12 +1833,13 @@ primary     = INT | FLOAT | STRING | "true" | "false"
 
 补充约束（EBNF 无法直接表达）：
 
-1. 关键字与命令名大小写不敏感；
-2. `IDENT` 在语句位置是命令名，在表达式位置是变量；
+1. 关键字、命令名、函数/类型构造器名大小写不敏感；
+2. `IDENT` 在语句位置是命令名；在表达式位置是变量，或已注册函数/类型构造器的 callable 值；命令名出现在表达式位置 → S008；
 3. `lvalue` 的后缀必须与前一 token 紧邻；
-4. 函数调用的 `(` 必须与 `IDENT` 紧邻；
-5. `word` 必须恰好消费切词得到的全部 token；
-6. 语句之间必须有一个终止符，紧邻 `}` 的语句除外。
+4. **所有后缀运算符**（`[...]`、`.IDENT`、`(...)`、`++`、`--`）都必须紧贴左操作数；
+5. 调用时 callee 必须是 callable，否则 R012；
+6. `word` 必须恰好消费切词得到的全部 token；
+7. 语句之间必须有一个终止符，紧邻 `}` 的语句除外。
 
 ---
 
@@ -1591,4 +1852,5 @@ primary     = INT | FLOAT | STRING | "true" | "false"
 3. 是否将 `point` 的维度约束扩展为 `point2` / `point3` 别名；
 4. 是否为 list 增加切片、拼接与内建函数；
 5. 是否引入错误恢复（一行错误不影响后续语句）；
-6. 是否在补全中引入 tree-sitter 之类的外部增量解析（当前不需要）。
+6. 是否在补全中引入 tree-sitter 之类的外部增量解析（当前不需要）；
+7. 用户函数如何复用现有 callable 值模型（定义、作用域、参数按值/ref）。
