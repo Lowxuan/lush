@@ -5,3 +5,6 @@ cmake-build-*/
 CMakeUserPresets.json
 *.user
 *.suo
+teaching.md
+AGENTS.md
+start.md
