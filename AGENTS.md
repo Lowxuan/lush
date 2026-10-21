@@ -13,16 +13,16 @@ spec 很长（约 1900 行），按需读：§0.1 决策表、§2–§8 语义�
 
 ## 当前状态（不要假设功能已存在）
 
-- **M0 已完成**，目前只有构建骨架：
-  - `lush_core` 里只有 `version`；
-  - CLI 只支持 `--version` / `--help`，无 REPL、无脚本模式、无 `-e`；
-  - 传入文件路径会报 `unknown option` 并以退出码 2 结束。
-- 语言核心（词法 / 语法 / 求值 / 命令 / 会话 / 补全）**尚未实现**。
+- **M0、M1 已完成**：
+  - `lush_core` 已实现 `utf8`、`source`、`diagnostic`、`token`、`lexer`、`version`；
+  - CLI 支持 `--version`、`--help`、`--dump-tokens <file>`、`--dump-tokens -e "<source>"`；
+  - 仍无 REPL、无脚本执行模式；`-e` 只用于 `--dump-tokens`；普通文件路径仍报 `unknown option` 并退出 2。
+- 语法 / 求值 / 命令 / 会话 / 补全**尚未实现**。
 - spec §15 的 G01–G52 是规范/目标，**不是可运行测试**；不要声称它们已通过。
-- 现有测试只有 2 个：`version_is_not_empty`、`version_matches_header`，另加 CTest `lush_version`。
-- 下一步是 **M1**：`utf8` → `source` → `diagnostic` → `token` → `lexer` + `tests/unit_lexer.cpp`。按里程碑推进，不要在 M1 阶段提前写 M4 的命令系统。
+- 当前 `lush_tests` 有 20 个测试；CTest 有三个目标：`lush_tests`、`lush_version`、`lush_dump_tokens`。
+- 下一步是 **M2（语法/AST/Parser）**。不要在 M2 阶段提前写 M4 的命令系统。
 
-M1 已确认的实现约定：
+M1 词法实现约定（已完成）：
 
 - Token 自己持有删除续行后的文本，同时保留原始 `offset/length`；字符串 token 的文本是解码后的值，`text.size()` 可以不等于 `length`。
 - `NL` / `EOF` 的 `wsBefore` 固定为 `false`；EOF 文本为空、length 为 0。
@@ -52,14 +52,14 @@ ctest --preset vs2022-debug --output-on-failure
   - VS Debug：`build/vs2022/bin/Debug/lush.exe`、`build/vs2022/lib/Debug/lush_core.lib`
   - VS Release：`build/vs2022-release/bin/Release/lush.exe`
   - Ninja：`build/ninja-debug/bin/lush.exe`
-- **测试没有单测过滤参数。** `lush_tests.exe` 忽略命令行参数，总是跑完全部注册测试。CTest 只能按测试名过滤（当前只有 `lush_tests`、`lush_version`），例如 `ctest --preset vs2022-debug -R lush_version`。
+- **测试没有单测过滤参数。** `lush_tests.exe` 忽略命令行参数，总是跑完全部注册测试。CTest 只能按测试名过滤（当前有 `lush_tests`、`lush_version`、`lush_dump_tokens`），例如 `ctest --preset vs2022-debug -R lush_version`。
 - **新增 `.cpp` 必须手动写进 CMake**：`src/CMakeLists.txt` 或 `tests/CMakeLists.txt`；项目不用 `GLOB`，只放文件不会参与构建。
 - `/W4` 目标零警告；`LUSH_WERROR=ON` 可升级为错误，但不要靠关闭警告来通过。
 
 ## 目录与依赖
 
 ```text
-src/lush/core/        只依赖标准库（当前仅 version）
+src/lush/core/        只依赖标准库（utf8/source/diagnostic/token/lexer/version）
 src/lush/command/     命令注册、参数绑定、会话（未实现）
 src/lush/driver/      脚本 / REPL 执行状态机（未实现）
 src/lush/completion/  补全（未实现）
