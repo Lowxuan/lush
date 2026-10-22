@@ -4,7 +4,7 @@
 
 - 语言规范：[docs/spec.md](docs/spec.md)
 - 开发里程碑：[docs/steps.md](docs/steps.md)
-- 当前状态：**M1 已完成，M2 规则定稿**（UTF-8 / Source / Diagnostic / Token / Lexer + `--dump-tokens`；M2 的 AST/Parser/`--dump-ast` 规则已写入 spec 0.3.3，代码待实现）
+- 当前状态：**M2 已完成**（M1 词法 + M2 AST/Parser/`--dump-ast`；求值、命令、REPL 尚未实现）
 
 ## 环境
 
@@ -35,11 +35,13 @@ ctest --test-dir build -C Debug --output-on-failure
 .\build\vs2022\bin\Debug\lush.exe --help
 .\build\vs2022\bin\Debug\lush.exe --dump-tokens -e "line 0,0 1,1"
 .\build\vs2022\bin\Debug\lush.exe --dump-tokens .\sample.lush
+.\build\vs2022\bin\Debug\lush.exe --dump-ast -e "line 0,0 1,1"
+.\build\vs2022\bin\Debug\lush.exe --dump-ast .\sample.lush
 ```
 
 ## 目录
 
-- `src/lush/core/`：语言核心（已实现 UTF-8、Source、Diagnostic、Token、Lexer；M2 AST/Parser 规则已定稿，代码待实现；求值待实现）
+- `src/lush/core/`：语言核心（已实现 UTF-8、Source、Diagnostic、Token、Lexer、AST、Parser；求值待实现）
 - `src/lush/command/`：命令注册、参数绑定、会话（计划）
 - `src/lush/driver/`：脚本 / REPL 执行状态机（计划）
 - `src/lush/completion/`：补全（计划）

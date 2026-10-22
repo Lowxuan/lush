@@ -14,15 +14,14 @@ spec 很长（约 2100 行），按需读：§0.1 决策表、§2–§8 语义�
 
 ## 当前状态（不要假设功能已存在）
 
-- **M0、M1 已完成**：
-  - `lush_core` 已实现 `utf8`、`source`、`diagnostic`、`token`、`lexer`、`version`；
-  - CLI 支持 `--version`、`--help`、`--dump-tokens <file>`、`--dump-tokens -e "<source>"`；
-  - 仍无 REPL、无脚本执行模式；`-e` 只用于 `--dump-tokens`；普通文件路径仍报 `unknown option` 并退出 2。
-- 语法 / 求值 / 命令 / 会话 / 补全**尚未实现**。
-- **M2 的语法/AST/Parser/dump 规则已在 `docs/spec.md` 0.3.3 和 `docs/steps.md` 定稿，但代码尚未开始。** 下一步按 steps 实现 M2；不要提前写 M3 求值或 M4 命令系统。
+- **M0、M1、M2 已完成**：
+  - `lush_core` 已实现 `utf8`、`source`、`diagnostic`、`token`、`lexer`、`version`、`ast`、`parser`；
+  - CLI 支持 `--version`、`--help`、`--dump-tokens <file>`、`--dump-tokens -e "<source>"`、`--dump-ast <file>`、`--dump-ast -e "<source>"`；
+  - 仍无 REPL、无脚本执行模式；`-e` 只用于 `--dump-tokens` / `--dump-ast`；普通文件路径仍报 `unknown option` 并退出 2。
+- 求值 / 命令 / 会话 / 补全**尚未实现**。
+- M2 的 AST/Parser 规则已在 `docs/spec.md` 0.3.3 和 `docs/steps.md` 实现并测试。下一步是 **M3（值、环境、求值、内建）**；不要提前写 M4 的命令系统。
 - spec §15 的 G01–G52 是规范/目标，**不是可运行测试**；不要声称它们已通过。
-- 当前 `lush_tests` 有 20 个测试；CTest 有三个目标：`lush_tests`、`lush_version`、`lush_dump_tokens`。
-- 下一步是 **M2（语法/AST/Parser）**。不要在 M2 阶段提前写 M4 的命令系统。
+- 当前 `lush_tests` 有 45 个测试；CTest 有四个目标：`lush_tests`、`lush_version`、`lush_dump_tokens`、`lush_dump_ast`。
 
 M1 词法实现约定（已完成）：
 
@@ -30,6 +29,13 @@ M1 词法实现约定（已完成）：
 - `NL` / `EOF` 的 `wsBefore` 固定为 `false`；EOF 文本为空、length 为 0。
 - 首错按源文本位置排序；非法 UTF-8 按其第一个非法字节参与排序。
 - `--dump-tokens` 支持 `lush --dump-tokens <file>` 和 `lush --dump-tokens -e "<source>"`；输出包含 `NL` / `EOF`，词法错误输出 §11.2 诊断并退出 1。
+
+M2 语法实现约定（已完成）：
+
+- `LexResult` 额外携带 `endsWithContinuation`、`lastContinuationOffset`、`endOffset`。
+- `ast.h/.cpp`：节点带 Span，表达式 Span 包含外层分组括号（`BoundaryInt` 例外，只覆盖字面量）；`BoundaryInt` 只允许在 `Unary(-, ...)` 中。
+- `parser.h/.cpp`：`parse`、`parseExpression`、`parseWord`、`splitCommandWords`，`Incomplete` 取最内层未闭合定界符；P002/P004 与词边界规则按 spec 0.3.3。
+- `--dump-ast` 使用脚本模式，解析失败只输出诊断并退出 1；`--dump-ast` 与 `--dump-tokens` 互斥。
 
 ## 构建 / 测试
 

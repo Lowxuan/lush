@@ -28,6 +28,7 @@ enum class ErrorCode {
     S006,
     S007,
     S008,
+    S009,
     R001,
     R002,
     R003,

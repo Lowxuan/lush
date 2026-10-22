@@ -8,13 +8,13 @@
 |---|---|---|
 | M0 构建骨架 | ✅ 已完成 | CMake presets、CLI 占位、测试 harness、CTest |
 | M1 词法 | ✅ 已完成 | UTF-8、Source、Diagnostic、Token、Lexer、`--dump-tokens` |
-| M2 语法 | 🟨 设计定稿 | AST、Parser、命令参数切词、`Incomplete`；规则已写入 spec 0.3.3，代码待实现 |
-| M3 求值 | ⬜ 未开始 | Value、Cell/Env、Eval、格式化、内建、非命令 golden |
+| M2 语法 | ✅ 已完成 | AST、Parser、命令参数切词、`Incomplete`、`--dump-ast`；`unit_parser` 全绿 |
+| M3 求值 | ⬜ 下一步 | Value、Cell/Env、Eval、格式化、内建、非命令 golden |
 | M4 命令 | ⬜ 未开始 | 命令 spec/registry、参考宿主、命令 golden |
 | M5 会话 / REPL | ⬜ 未开始 | Session、Driver、脚本/REPL CLI |
 | M6 补全 | ⬜ 未开始 | 补全上下文与候选 API |
 
-M1 已完成：`lush_tests` 当前 20 个测试，CTest 目标为 `lush_tests`、`lush_version`、`lush_dump_tokens`。M2 的语法/API/dump 规则已在 spec 0.3.3 和本文定稿，代码尚未开始。
+M1、M2 已完成：`lush_tests` 当前 45 个测试，CTest 目标为 `lush_tests`、`lush_version`、`lush_dump_tokens`、`lush_dump_ast`。下一步是 M3（求值）。
 
 ---
 
@@ -66,7 +66,7 @@ M1 已完成：`lush_tests` 当前 20 个测试，CTest 目标为 `lush_tests`�
 
 ---
 
-## M2 — 语法 / AST / Parser（设计定稿，待实现）
+## M2 — 语法 / AST / Parser（已完成）
 
 **目标**：把 Token 流解析成带 Span 的 AST，完成命令参数切词、语句/表达式判定、`Incomplete` 原因，并提供 `--dump-ast`。
 

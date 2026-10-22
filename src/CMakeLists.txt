@@ -4,6 +4,8 @@ add_library(lush_core STATIC
     lush/core/source.cpp
     lush/core/diagnostic.cpp
     lush/core/lexer.cpp
+    lush/core/ast.cpp
+    lush/core/parser.cpp
 )
 
 target_include_directories(lush_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")

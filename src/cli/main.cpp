@@ -1,5 +1,8 @@
 #include "lush/lush.h"
 
+#include "lush/core/ast.h"
+#include "lush/core/parser.h"
+
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -34,12 +37,16 @@ void printHelp() {
         << "usage: lush [options]\n"
         << "       lush --dump-tokens <file>\n"
         << "       lush --dump-tokens -e \"<source>\"\n"
+        << "       lush --dump-ast <file>\n"
+        << "       lush --dump-ast -e \"<source>\"\n"
         << "\n"
         << "options:\n"
         << "  -v, --version        显示版本\n"
         << "  -h, --help           显示帮助\n"
         << "  --dump-tokens <file> 输出文件中的 token 流\n"
-        << "  --dump-tokens -e ... 输出一段源码的 token 流\n";
+        << "  --dump-tokens -e ... 输出一段源码的 token 流\n"
+        << "  --dump-ast <file>    输出文件中的 AST\n"
+        << "  --dump-ast -e ...    输出一段源码的 AST\n";
 }
 
 bool readFile(const std::string& path, std::string& out) {
@@ -125,14 +132,60 @@ int dumpTokens(const std::string& text) {
     return 0;
 }
 
+int dumpAst(const std::string& text) {
+    lush::core::Source source(text);
+    lush::core::Lexer lexer(source);
+    lush::core::LexResult lex = lexer.tokenize();
+
+    if (lex.diagnostic) {
+        std::cerr << lush::core::formatDiagnostic(source, *lex.diagnostic);
+        return 1;
+    }
+
+    lush::core::ParseResult result =
+        lush::core::parse(lex, lush::core::ParseOptions::Script);
+
+    if (result.status != lush::core::ParseStatus::Ok || !result.program) {
+        if (result.diagnostic) {
+            std::cerr << lush::core::formatDiagnostic(source, *result.diagnostic);
+        } else {
+            std::cerr << "error: 解析失败\n";
+        }
+        return 1;
+    }
+
+    std::cout << lush::core::dumpAst(*result.program, source);
+    return 0;
+}
+
+bool hasOption(int argc, char** argv, std::string_view option) {
+    for (int index = 1; index < argc; ++index) {
+        if (std::string_view(argv[index]) == "-e") {
+            ++index;
+            continue;
+        }
+        if (std::string_view(argv[index]) == option) {
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
     setupConsole();
 
+    const bool wantsDumpTokens = hasOption(argc, argv, "--dump-tokens");
+    const bool wantsDumpAst = hasOption(argc, argv, "--dump-ast");
+    if (wantsDumpTokens && wantsDumpAst) {
+        std::cerr << "--dump-tokens and --dump-ast are mutually exclusive\n";
+        return 2;
+    }
+
     if (argc == 1) {
         std::cout << "lush " << lush::version()
-                  << " (M1 lexer; REPL not implemented yet)\n";
+                  << " (M2 parser; REPL not implemented yet)\n";
         return 0;
     }
 
@@ -152,6 +205,25 @@ int main(int argc, char** argv) {
 
         std::cerr << "usage: lush --dump-tokens <file>\n"
                   << "       lush --dump-tokens -e \"<source>\"\n";
+        return 2;
+    }
+
+    if (std::string_view(argv[1]) == "--dump-ast") {
+        if (argc == 3 && std::string_view(argv[2]) != "-e") {
+            std::string text;
+            if (!readFile(argv[2], text)) {
+                std::cerr << "cannot read file: " << argv[2] << '\n';
+                return 2;
+            }
+            return dumpAst(text);
+        }
+
+        if (argc == 4 && std::string_view(argv[2]) == "-e") {
+            return dumpAst(std::string(argv[3]));
+        }
+
+        std::cerr << "usage: lush --dump-ast <file>\n"
+                  << "       lush --dump-ast -e \"<source>\"\n";
         return 2;
     }
 

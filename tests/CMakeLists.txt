@@ -2,6 +2,7 @@ add_executable(lush_tests
     test_main.cpp
     unit_smoke.cpp
     unit_lexer.cpp
+    unit_parser.cpp
 )
 
 target_link_libraries(lush_tests PRIVATE lush::core)
@@ -20,5 +21,12 @@ if(TARGET lush)
     )
     set_tests_properties(lush_dump_tokens PROPERTIES
         PASS_REGULAR_EXPRESSION "EOF"
+    )
+
+    add_test(NAME lush_dump_ast
+        COMMAND $<TARGET_FILE:lush> --dump-ast -e "echo 1"
+    )
+    set_tests_properties(lush_dump_ast PROPERTIES
+        PASS_REGULAR_EXPRESSION "Program"
     )
 endif()

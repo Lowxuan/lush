@@ -12,8 +12,13 @@
 namespace lush::core {
 
 struct LexResult {
+    static constexpr std::size_t npos = static_cast<std::size_t>(-1);
+
     std::vector<Token> tokens;
     std::optional<Diagnostic> diagnostic;
+    bool endsWithContinuation = false;
+    std::size_t lastContinuationOffset = npos;
+    std::size_t endOffset = 0;
 };
 
 class Lexer {
@@ -51,6 +56,9 @@ private:
     std::vector<Token> tokens_;
     std::size_t pos_ = 0;
     std::size_t depth_ = 0;
+    std::size_t lastContinuationOffset_ = LexResult::npos;
+    std::size_t lastContinuationLogicalPos_ = LexResult::npos;
+    bool seenNonNlAfterLastContinuation_ = false;
     std::optional<Diagnostic> diagnostic_;
 };
 

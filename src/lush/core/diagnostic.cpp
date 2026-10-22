@@ -29,6 +29,7 @@ std::string_view errorCodeName(ErrorCode code) noexcept {
     case ErrorCode::S006: return "S006";
     case ErrorCode::S007: return "S007";
     case ErrorCode::S008: return "S008";
+    case ErrorCode::S009: return "S009";
     case ErrorCode::R001: return "R001";
     case ErrorCode::R002: return "R002";
     case ErrorCode::R003: return "R003";

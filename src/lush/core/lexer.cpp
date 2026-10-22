@@ -104,6 +104,10 @@ void Lexer::buildLogicalText() {
     logical_.reserve(text.size());
     map_.reserve(text.size());
 
+    lastContinuationOffset_ = LexResult::npos;
+    lastContinuationLogicalPos_ = LexResult::npos;
+    seenNonNlAfterLastContinuation_ = false;
+
     auto append = [this](char value, std::size_t originalOffset) {
         logical_.push_back(value);
         map_.push_back(originalOffset);
@@ -149,6 +153,11 @@ void Lexer::buildLogicalText() {
                     text[next + 1] == '\n') {
                     ++next;
                 }
+
+                lastContinuationOffset_ = offset;
+                lastContinuationLogicalPos_ = logical_.size();
+                seenNonNlAfterLastContinuation_ = false;
+
                 offset = next + 1;
                 continue;
             }
@@ -207,6 +216,12 @@ bool Lexer::wsBeforeAt(std::size_t offset) const noexcept {
 
 void Lexer::emit(TokenKind kind, std::size_t start, std::size_t end, bool wsBefore,
                  std::string text) {
+    if (kind != TokenKind::Newline && kind != TokenKind::EndOfFile &&
+        lastContinuationLogicalPos_ != LexResult::npos &&
+        (start >= lastContinuationLogicalPos_ || end > lastContinuationLogicalPos_)) {
+        seenNonNlAfterLastContinuation_ = true;
+    }
+
     const Span span = spanOf(start, end);
     Token token;
     token.kind = kind;
@@ -488,6 +503,9 @@ void Lexer::scanBackslash() {
     }
 
     if (atEnd()) {
+        lastContinuationOffset_ = start < map_.size() ? map_[start] : source_.size();
+        lastContinuationLogicalPos_ = start;
+        seenNonNlAfterLastContinuation_ = false;
         fail(ErrorCode::L005, start, pos_, "续行符位于 EOF");
         return;
     }
@@ -665,6 +683,7 @@ LexResult Lexer::tokenize() {
     diagnostic_.reset();
     pos_ = 0;
     depth_ = 0;
+    seenNonNlAfterLastContinuation_ = false;
 
     while (!atEnd() && !diagnostic_) {
         const char value = charAt(pos_);
@@ -720,7 +739,11 @@ LexResult Lexer::tokenize() {
         emit(TokenKind::EndOfFile, logical_.size(), logical_.size(), false, {});
     }
 
-    return LexResult{std::move(tokens_), std::move(diagnostic_)};
+    const bool endsWithContinuation =
+        lastContinuationOffset_ != LexResult::npos && !seenNonNlAfterLastContinuation_;
+
+    return LexResult{std::move(tokens_), std::move(diagnostic_), endsWithContinuation,
+                     lastContinuationOffset_, source_.size()};
 }
 
 } // namespace lush::core
