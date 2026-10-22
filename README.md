@@ -3,6 +3,7 @@
 一个面向「命令行 + GUI 深度融合」的嵌入式命令语言与命令执行框架。
 
 - 语言规范：[docs/spec.md](docs/spec.md)
+- 开发里程碑：[docs/steps.md](docs/steps.md)
 - 当前状态：**M1**（UTF-8 / Source / Diagnostic / Token / Lexer + `--dump-tokens`；语法、求值、命令、REPL 尚未实现）
 
 ## 环境
