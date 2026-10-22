@@ -68,55 +68,155 @@ M1 已完成：`lush_tests` 当前 20 个测试，CTest 目标为 `lush_tests`�
 
 ## M2 — 语法 / AST / Parser（下一步）
 
-**目标**：把 Token 流解析成带 Span 的 AST，并完成命令参数切词、语句/表达式判定和 `Incomplete` 结果。
+**目标**：把 Token 流解析成带 Span 的 AST，完成命令参数切词、语句/表达式判定、`Incomplete` 原因，并提供 `--dump-ast`。
 
 **文件**
 
 - `src/lush/core/ast.h`
+- `src/lush/core/ast.cpp`（AST dump/visitor）
 - `src/lush/core/parser.h/.cpp`
 - `tests/unit_parser.cpp`
-- 可选：`--dump-ast` 调试入口
+- `src/cli/main.cpp`：`--dump-ast <file>`、`--dump-ast -e "<source>"`
 
-**任务**
+**AST schema**
 
-- AST 节点携带 `Span`，Span 指向原始源文本。
-- 语句：块、`if`/`else`、`while`、`for-in`、C 风格 `for`、`break`、`continue`、赋值、`ref` 赋值、命令语句。
-- 表达式：优先级爬升、三元、一元/二元、后缀调用/索引/成员/`++`/`--`、Point/list 字面量。
-- 位置决定调用：
-  - 语句位置：并置命令；
-  - 表达式位置：紧贴的后缀 `(...)`；
-  - M2 只按语法解析；命令名进入表达式位置的 S008 由 M4 的注册表校验。
-- 命令参数切词：按顶层 `wsBefore` 切词，每词解析为 `barePoint | expr`，必须整词消费。
-- lvalue 路径必须连续；后缀必须紧贴左操作数。
+语句：
+
+- `Program`
+- `Block`
+- `If`（cond、then、可选 else）
+- `While`
+- `ForIn`（变量名、iterable、body）
+- `For`（可选 init 变量/表达式、可选 cond、可选 step、body）
+- `Break` / `Continue`
+- `Assign`（lvalue、value）
+- `RefAssign`（目标名、源名）
+- `Command`（name、args）
+- `EmptyStmt`（显式 `;` 出现在语句位置或控制语句 body 时产生；仅作为非空语句终止符的分号、空行不产生节点）
+
+表达式：
+
+- `Int`（int64）、`Float`（double）、`String`（解码后）、`Bool`
+- `Variable`
+- `Unary`、`Binary`、`Ternary`
+- `Call`、`Index`、`Member`
+- `IncDec`（prefix/postfix）
+- `Deref`（只允许紧贴的 `*IDENT`）
+- `Point`（坐标表达式列表 + `bare` 标志）
+- `List`
+
+约定：
+
+- 所有节点带 `Span`，指向原始源文本；复合节点覆盖第一个 token 到最后一个 token。
+- 括号分组不保留为独立节点，`(x)` 直接是 `x`；分组对可赋值性透明，`(x)++` 合法。
+- `line 1,2` 生成 `Point(bare=true)`；`line (1,2)` 生成 `Point(bare=false)`。
+- 命令名保存原始拼写；M4 再大小写不敏感查找。
+- `INT64_MIN` 折叠：边界字面量只允许作为（可带括号的）单目 `-` 的直接操作数；其它位置在 M2 报 L004。`--9223372036854775808` 的 AST 是外层一元负号，溢出留给 M3。
+- Parser 不做 Point 坐标类型检查、不做 `++` 的 int 类型检查；这些留给 M3。
+
+**Parser API**
+
+```text
+ParseOptions { Script | Repl }
+ParseStatus  { Ok | Error | Incomplete }
+IncompleteReason =
+    UnclosedBrace | UnclosedParen | UnclosedBracket
+  | TrailingContinuation | NeedStatement
+
+ParseResult { status, incompleteReason, program, diagnostic }
+```
+
+- Lexer 的 `LexResult` 增加 `endsWithContinuation`：最后一个被删除的合法续行之后没有产生任何 token 时为 true（注释/空白/空行不算 token）。
+- Repl 模式下，尾随续行（含 `\` 位于 EOF）转成 `Incomplete(TrailingContinuation)`。
+- Repl 模式下，控制头缺 body 返回 `Incomplete(NeedStatement)`：
+  - `if (...)` 后 EOF
+  - `else` 后 EOF
+  - `while (...)` 后 EOF
+  - `for (...)` 后 EOF
+  - `for i in expr` 后 EOF
+- 未闭合 `{}` / `()` / `[]` 在 Repl 模式下返回对应的 `Unclosed*`。
+- Script 模式：未闭合括号和控制头缺 body 都是 P002；`\` 位于 EOF（没有换行）是 L005；`\` + 换行仍是合法续行。
+- 缺少表达式的输入（`a = 1 +`、`a =`）仍是 P002，不返回 `Incomplete`。
+- 有明确 P 错误时错误优先，不转 `Incomplete`；错误/Incomplete 不返回部分 AST。
+
+**语法行为**
+
+- 句子位置是命令；表达式位置是后缀调用。M2 只按语法解析，S008 由 M4 注册表校验。
+- `f(1,2)` 在语句位置是命令 `f` + 一个 Point 参数；`f()` 在语句位置是命令 `f` + 空括号词，`()` 不是合法表达式 → P004。
+- 命令参数按顶层 `wsBefore` 切词，每词优先 `barePoint`，再 `expr`，必须整词消费。
+- 回退规则：
+  - `x[0]` 单独一行 → 命令 `x` + 参数 `[0]`（语法合法，未知命令留给 S001）；
+  - `x.y` 单独一行 → 命令 `x` + 词 `.y` → P004 在 `.y`；
+  - `p .x = 5` → P004 在 `.x`；
+  - `a [0] = 1` → P004 在 `=`。
+- `*` 必须紧贴变量：`x = *h` 合法，`x = * h` 是 P001（在 `h`）；`*h = v` 合法，`* h = v` 是 P001；`*h[0]` 是 P001（在 `[`）。
+- 前缀 `-`/`!`/`++`/`--` 不要求紧贴；后缀必须紧贴。`i ++` 在表达式位置是 P001（在 `++`）。
+- `++`/`--` 的目标不是变量/元素/成员 → S009；`(x)++` 合法。
+- `a = b = c` → P001 在第二个 `=`。
+- `a = ref` 单独出现，或 `a = ref` 后用普通换行接变量，都是 S004（在 `ref`）；只有显式 `\` 续行才允许 `ref` 与变量拼到同一逻辑行。
+- `ref` 出现在其它位置、左右侧不是简单变量名 → S004（位置在 `ref`）。
+- `def` / `return` 出现在任何位置 → S007（在关键字）。
+- 空语句 `;` 可作为控制语句 body：`if (a);`、`while (a);`、`for (;;);`；`if (a); b = 2` 合法，`b = 2` 是下一条语句。
 - 换行省略位置按 spec §3.8。
-- `ParseResult { Ok / Error / Incomplete }`：
-  - `Incomplete` 只用于 REPL 的未闭合 `{}` / `()` / `[]` 或行尾 `\`；
-  - 脚本 EOF 的未闭合括号是 P002；
-  - 脚本行尾 `\` 按 §2.3 报 L005。
-- 语法错误 P001–P006。
+- 语法错误 P001–P006 的位置按 spec §3.9。
+
+**AST dump**
+
+- `--dump-ast <file>` / `--dump-ast -e "<source>"`，使用**脚本模式**。
+- 缩进树；每个节点打印类型、起点和终点的 `line:col`，不打印字节 offset；终点表示最后一个字符之后的位置（end-exclusive）。
+- 字面量保存实际值：int 十进制、double 最短表示、string 转义、bool `true`/`false`。
+- 空程序 dump 为 `Program @1:1..1:1`；空行不产生节点；显式 `;` 在语句位置产生 `EmptyStmt`，只有作为非空语句终止符的分号不产生节点。
+- 解析失败只打印 §11.2 诊断并退出 1；不打印半成品 AST。
+- `--dump-ast` 与 `--dump-tokens` 互斥；同时给出时按用法错误退出 2。
+- 增加 CTest `lush_dump_ast`。
+
+示例风格：
+
+```text
+Program @1:1..1:9
+  CommandStmt name="line" @1:1..1:9
+    BarePoint @1:6..1:9
+      Int 0 @1:6..1:7
+      Int 0 @1:8..1:9
+```
 
 **测试**
 
 - spec 中所有语法示例；
 - `line a - b`、`line -1 -2`、`line 1,2 3,4`、`line 1, 2`；
 - `line(1,2)`、`type(4.4)(2)`、`(type(1))(2)`；
-- `p = point [1,2]` → P001；
+- 语句位置 `f(1,2)` 是命令 + Point 参数；`f()` → P004；
+- `line 1,2,3,4` → P004 在词起点；`line (1,2,3,4)` → P003 在 `(`；`line (1,2),3` → P004；
+- `p = point [1,2]` → P001 在 `[`；
+- `x = *h` / `echo *r` 合法；`x = * h`、`* h = v`、`*h[0]` → P001；
+- 表达式位置 `y = (x)++` 合法；`x = 1++` → S009；单独一行 `1++` / `(x)++` 是 P001（裸表达式不是语句）；
+- `a = b = c` → P001 在第二个 `=`；
+- `a = 1 b = 2` → P006 在 `b`；`a = 1 2` → P001 在 `2`；
+- `(1,2]` → P005 在 `]`；顶层 `)` → P001；
+- `x[0]` 回退为命令 `x` + `[0]`；`x.y` → P004 在 `.y`；`p .x = 5` → P004 在 `.x`；`a [0] = 1` → P004 在 `=`；
+- `a = ref` / `a = ref` + 普通换行 + 变量 → S004；`a = ref \` 续行 + 变量 → 合法；
+- `def` / `return` → S007；
+- `if (a);`、`while (a);`、`for (;;);`、`if (a); else b = 2` 合法；`if (a); b = 2` 合法；`a = 1;;b = 2` 中的第二个 `;` 产生 `EmptyStmt`；
+- Repl `a = ref \` 续行结尾 → `Incomplete`；没有续行的 `a = ref` → S004；
 - 多行块；
-- 未闭合 `{}` / `()` / `[]` → `Incomplete`；
-- 脚本 EOF 未闭合 → P002；
+- Repl 未闭合 `{}` / `()` / `[]` → `Incomplete(Unclosed*)`；
+- Repl 尾随 `\` → `Incomplete(TrailingContinuation)`；
+- Repl `if (true)` / `for (;;)` EOF → `Incomplete(NeedStatement)`；`if (a) else ...` → P001；
+- 脚本 EOF 未闭合 → P002；脚本 `if (true)` EOF → P002；
+- AST dump 覆盖命令、赋值、if/else、循环、ref、Point/barePoint、list、EmptyStmt；
 - G15/G16/G34/G46 的解析结果符合 spec。
 
 **完成标准**
 
 - `unit_parser` 全绿；
-- AST dump（若实现）可用于人工核对；
+- `--dump-ast` 可用于人工核对；
 - 解析阶段不执行、不注册命令；
 - `/W4` 无警告。
 
 **边界**
 
 - 只做语法层；求值、命令绑定、会话都不在 M2。
-- 命令参数切词在 Parser 中完成，Lexer 只提供 `wsBefore` 和 Token。
+- 命令参数切词在 Parser 中完成，Lexer 只提供 `wsBefore`、Token 和末尾续行标记。
 
 ---
 
@@ -226,7 +326,19 @@ M1 已完成：`lush_tests` 当前 20 个测试，CTest 目标为 `lush_tests`�
 - 必选/可选参数、默认值、空输入、取消。
 - 会话输入按 `barePoint | expr` 解析。
 - 脚本模式不进入会话；脚本缺参报 S006。
-- REPL 多行 `Incomplete`；脚本 EOF 未闭合是 P002，行尾 `\` 是 L005。
+- 复用 M2 的 `IncompleteReason`：
+  - `NeedStatement`：`if` / `while` / `for` / `for-in` / `else` 缺 body；
+  - `TrailingContinuation`：末尾续行；
+  - `UnclosedBrace/Paren/Bracket`：未闭合括号。
+- 空白行策略：
+  - `NeedStatement` / `TrailingContinuation`：空白行取消待完成输入，不执行、不报错；
+  - `Unclosed*`：空白行作为空白追加，继续等待；
+  - 注释行不算空白行，继续等待；
+  - 顶层空行是空语句；
+  - 空 body 必须显式写 `;`：`if (a);`、`while (a);`、`for (;;);`。
+- `if (true)` 后 EOF、`for (;;)` 后 EOF 在 Repl 中是 `Incomplete(NeedStatement)`；脚本中是 P002。
+- `a = 1 +`、`a =` 等缺少表达式仍是 P002，不转 `Incomplete`。
+- 脚本模式不续行：EOF 未闭合括号是 P002，`\` 位于 EOF（没有换行）是 L005，`\` + 换行仍是合法续行。
 - CLI：
   - `lush` 进入 REPL；
   - `lush file.lush` 执行脚本；
@@ -238,6 +350,11 @@ M1 已完成：`lush_tests` 当前 20 个测试，CTest 目标为 `lush_tests`�
 
 - G22；
 - 多行块；
+- `if (true)` / `for (;;)` 后 EOF → `Incomplete(NeedStatement)`；
+- 空白行取消 `NeedStatement` / `TrailingContinuation`；
+- 未闭合块内空白行继续等待；
+- 注释行不取消待完成输入；
+- `if (a);` / `while (a);` / `for (;;);` 空 body；
 - 取消；
 - 脚本 vs REPL 的 S006 差异；
 - 会话中输入 `0,0`；
