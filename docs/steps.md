@@ -8,13 +8,13 @@
 |---|---|---|
 | M0 构建骨架 | ✅ 已完成 | CMake presets、CLI 占位、测试 harness、CTest |
 | M1 词法 | ✅ 已完成 | UTF-8、Source、Diagnostic、Token、Lexer、`--dump-tokens` |
-| M2 语法 | ⬜ 下一步 | AST、Parser、命令参数切词、`Incomplete` |
+| M2 语法 | 🟨 设计定稿 | AST、Parser、命令参数切词、`Incomplete`；规则已写入 spec 0.3.3，代码待实现 |
 | M3 求值 | ⬜ 未开始 | Value、Cell/Env、Eval、格式化、内建、非命令 golden |
 | M4 命令 | ⬜ 未开始 | 命令 spec/registry、参考宿主、命令 golden |
 | M5 会话 / REPL | ⬜ 未开始 | Session、Driver、脚本/REPL CLI |
 | M6 补全 | ⬜ 未开始 | 补全上下文与候选 API |
 
-M1 已完成：`lush_tests` 当前 20 个测试，CTest 目标为 `lush_tests`、`lush_version`、`lush_dump_tokens`。M2 尚未开始。
+M1 已完成：`lush_tests` 当前 20 个测试，CTest 目标为 `lush_tests`、`lush_version`、`lush_dump_tokens`。M2 的语法/API/dump 规则已在 spec 0.3.3 和本文定稿，代码尚未开始。
 
 ---
 
@@ -66,7 +66,7 @@ M1 已完成：`lush_tests` 当前 20 个测试，CTest 目标为 `lush_tests`�
 
 ---
 
-## M2 — 语法 / AST / Parser（下一步）
+## M2 — 语法 / AST / Parser（设计定稿，待实现）
 
 **目标**：把 Token 流解析成带 Span 的 AST，完成命令参数切词、语句/表达式判定、`Incomplete` 原因，并提供 `--dump-ast`。
 
@@ -82,36 +82,71 @@ M1 已完成：`lush_tests` 当前 20 个测试，CTest 目标为 `lush_tests`�
 
 语句：
 
-- `Program`
-- `Block`
+- `Program`（statements）
+- `Block`（statements）
 - `If`（cond、then、可选 else）
-- `While`
-- `ForIn`（变量名、iterable、body）
-- `For`（可选 init 变量/表达式、可选 cond、可选 step、body）
+- `While`（cond、body）
+- `ForIn`（变量 Name、iterable、body）
+- `For`（init 为可选 `Assign`、cond/step 为可选表达式、body）
 - `Break` / `Continue`
-- `Assign`（lvalue、value）
-- `RefAssign`（目标名、源名）
-- `Command`（name、args）
-- `EmptyStmt`（显式 `;` 出现在语句位置或控制语句 body 时产生；仅作为非空语句终止符的分号、空行不产生节点）
+- `Assign`（target、value、`=` 的 Span）
+- `RefAssign`（目标 Name、源 Name、`ref` 的 Span）
+- `Command`（Name、args）
+- `EmptyStmt`
 
 表达式：
 
-- `Int`（int64）、`Float`（double）、`String`（解码后）、`Bool`
-- `Variable`
+- `Int`（int64）、`BoundaryInt`（无值）、`Float`（double）、`String`（解码后）、`Bool`
+- `Variable`（Name）
 - `Unary`、`Binary`、`Ternary`
 - `Call`、`Index`、`Member`
-- `IncDec`（prefix/postfix）
-- `Deref`（只允许紧贴的 `*IDENT`）
+- `IncDec`（prefix/postfix、op）
+- `Deref`（保留 `Variable` 子节点 + `*` 的 Span）
 - `Point`（坐标表达式列表 + `bare` 标志）
 - `List`
 
+公共结构：
+
+- `Name { text, span }`：变量名、命令名、成员名、for 变量名、ref 目标/源。
+- 所有节点继承 `Node`，带 `Span`；`Stmt`、`Expr` 是中间基类。
+- `Program` / `Block` 持有 `vector<unique_ptr<Stmt>>`；`For` 的 init 是 `unique_ptr<Assign>`。
+- AST 通过公开 visitor 访问；每个节点一个 `visit(const X&)`，默认空实现。
+
+Span 约定：
+
+- 节点的 Span 指向原始源文本，end-exclusive。
+- 表达式节点的 Span 覆盖它在源码中书写的完整表达式，**包括直接包住它的分组括号**。
+  - `(x)` 的 Variable Span 是 `(x)`，但 `Variable::name.span` 只覆盖 `x`。
+  - `(1+2)` 的 Binary Span 覆盖 `(1+2)`。
+  - `((1,2))` 的 Point Span 包含最外层分组括号；Point 字面量自身的括号属于 Point。
+  - Point 的坐标节点不包含 Point 字面量的括号；`(1,2)` 中 `1`、`2` 只覆盖自己。
+  - `BoundaryInt` 是唯一例外：Span 只覆盖字面量，不包含外层括号。
+  - `(-922...)` 的 Unary Span 包含最外层 `(` `)`；`-(922...)` 的 Unary Span 包含 `-` 和操作数括号。
+- 语句 Span 不包含末尾终止符 `;`；`EmptyStmt` 自己的 Span 包含它的 `;`。
+- `Program` 非空时从第一条语句的起点到最后一条语句的终点；空程序为 `1:1..1:1`。
+- `Block` 包含 `{` 到 `}`；`Command` 从命令名到最后一个参数；无参数时到命令名末尾。
+- `If` 从 `if` 到 then/else body 末尾；`While`/`ForIn`/`For` 从关键字到 body 末尾。
+- `Assign` 从 target 起点到 value 终点（不含 `;`）；`RefAssign` 从目标名起点到源名终点。
+- `Call` 从 callee 起点到 `)`；`Index` 从 receiver 起点到 `]`；`Member` 从 receiver 起点到成员名末尾；`Point`/`List` 覆盖自己的括号；`Deref` 从 `*` 到变量名末尾。
+
+子 Span（供 M3/M4 诊断）：
+
+- `Binary::opSpan`、`Unary::opSpan`、`IncDec::opSpan`
+- `Deref::starSpan`
+- `Ternary::questionSpan` / `colonSpan`
+- `Member::member.span`、`Command::name.span`、`ForIn::var.span`
+- `RefAssign::target.span` / `source.span` / `refSpan`
+- `Assign::assignSpan`
+- `Call::lparenSpan` / `rparenSpan`
+- `Index::openSpan` / `closeSpan`
+
 约定：
 
-- 所有节点带 `Span`，指向原始源文本；复合节点覆盖第一个 token 到最后一个 token。
 - 括号分组不保留为独立节点，`(x)` 直接是 `x`；分组对可赋值性透明，`(x)++` 合法。
 - `line 1,2` 生成 `Point(bare=true)`；`line (1,2)` 生成 `Point(bare=false)`。
 - 命令名保存原始拼写；M4 再大小写不敏感查找。
-- `INT64_MIN` 折叠：边界字面量只允许作为（可带括号的）单目 `-` 的直接操作数；其它位置在 M2 报 L004。`--9223372036854775808` 的 AST 是外层一元负号，溢出留给 M3。
+- `INT64_MIN`：`BoundaryInt` 只允许作为（可带括号的）单目 `-` 的直接操作数；AST 保留 `Unary(-, BoundaryInt)`，不折叠成 `Int(INT64_MIN)`。其它位置在 M2 报 L004。`--922...` 词法为 `MinusMinus` 前缀，报 S009 在 `--`；`- -922...` / `-(-922...)` 的 AST 是外层一元负号，溢出留给 M3。
+- `BoundaryInt` 不存值；dump 不打印值。
 - Parser 不做 Point 坐标类型检查、不做 `++` 的 int 类型检查；这些留给 M3。
 
 **Parser API**
@@ -124,99 +159,200 @@ IncompleteReason =
   | TrailingContinuation | NeedStatement
 
 ParseResult { status, incompleteReason, program, diagnostic }
+ExprParseResult { status, incompleteReason, expression, diagnostic }
+
+TokenRange { begin, end }        // token 下标，end-exclusive
+WordEnd     { WordBoundary | StatementTerminator | InputEnd }
+Boundary    { WordBoundary | StatementTerminator | InputEnd
+            | ClosingParen | ClosingBracket | Comma | Colon }
+CommandWord { range, end }
 ```
 
-- Lexer 的 `LexResult` 增加 `endsWithContinuation`：最后一个被删除的合法续行之后没有产生任何 token 时为 true（注释/空白/空行不算 token）。
-- Repl 模式下，尾随续行（含 `\` 位于 EOF）转成 `Incomplete(TrailingContinuation)`。
-- Repl 模式下，控制头缺 body 返回 `Incomplete(NeedStatement)`：
-  - `if (...)` 后 EOF
-  - `else` 后 EOF
-  - `while (...)` 后 EOF
-  - `for (...)` 后 EOF
-  - `for i in expr` 后 EOF
-- 未闭合 `{}` / `()` / `[]` 在 Repl 模式下返回对应的 `Unclosed*`。
-- Script 模式：未闭合括号和控制头缺 body 都是 P002；`\` 位于 EOF（没有换行）是 L005；`\` + 换行仍是合法续行。
-- 缺少表达式的输入（`a = 1 +`、`a =`）仍是 P002，不返回 `Incomplete`。
+```cpp
+ParseResult parse(const LexResult&, ParseOptions);
+ExprParseResult parseExpression(const LexResult&, TokenRange, Boundary, ParseOptions);
+ExprParseResult parseWord(const LexResult&, TokenRange, WordEnd, ParseOptions);
+std::vector<CommandWord> splitCommandWords(const std::vector<Token>&,
+                                           std::size_t begin, std::size_t end);
+std::string dumpAst(const Program&, const Source&);
+std::string dumpExpr(const Expr&, const Source&);
+```
+
+- `ParseResult.program` 是 `std::unique_ptr<Program>`；`ExprParseResult.expression` 是 `std::unique_ptr<Expr>`；Error/Incomplete 时两者为空。
+- `LexResult` 增加（放在现有 `tokens, diagnostic` 之后）：`endsWithContinuation`、`lastContinuationOffset`、`endOffset`。
+  - `endsWithContinuation`：最后一个被删除的合法续行之后没有非 NL token 时为 true；注释/空白/空行产生的 NL 不算；L005 也置 true。
+  - `lastContinuationOffset`：最后一个被删除合法续行的原始 offset；L005 是反斜杠 offset；没有续行时为 `npos`。Parser 用它判断显式终止符是否位于续行之后。
+  - `endOffset`：源文本末尾 offset，供无 EOF token 的 L005 生成 P002/Incomplete。
+- `parse` 不接受 `Source`；`dumpAst`/`dumpExpr` 才需要 `Source` 计算 line:col。
+- 词法错误处理：
+  - 非 L005：直接返回 Error。
+  - L005 + Script：Error(L005)。
+  - L005 + Repl：用 tokens + endOffset 继续解析；有确定错误先报错，否则按 Incomplete 优先级处理。
+- Repl Incomplete 优先级：
+  1. 已经出现的确定性错误（不是“输入末尾缺少 token”的 P001/P003/P005/S004/S007/S009/L004 等）→ Error；`a = ref` 这种仅因 RHS 在末尾缺失而产生的 S004 可被尾随续行 defer；
+  2. `Unclosed*`（多个未闭合取最内层）；
+  3. `NeedStatement`；
+  4. `TrailingContinuation`：最后一个被删除的合法续行之后没有产生任何**非 NL** token；注释、空白行、注释行产生的 NL 都不算。包括 `\` 位于 EOF（L005）、`\` 后只有水平空白/注释/空行，或最后一行以 `\` 后跟零个或多个水平空白结束。只有错误位置在 `lastContinuationOffset` 之后（或 `a = ref` 的 RHS 末尾缺失）才 defer。
+  5. 以上都不是时，按普通结束错误处理：缺少表达式是 P002（显式语句终止符或 EOF）；`a = ref` 缺少 RHS 仍是 S004。显式终止符上的 P002/S004 只有在没有尾随续行时才会走到这里。
+- `WordEnd` 语义：
+  - `WordBoundary`：词后还有词；缺少表达式/操作数 → P004 在词首 token；
+  - `StatementTerminator`：词后是 NL / `;` / `}` / `else`；缺少表达式/操作数 → P002 在终止符起点；
+  - `InputEnd`：词后是 EOF；缺少表达式/操作数 → P002 在 `endOffset`；Repl + 尾随续行 → `Incomplete(TrailingContinuation)`。
+  - 已经确定非法的词（多余坐标、尾随逗号、barePoint 逗号后坐标不完整、残留闭括号、词首根本无法开始表达式如 `+` 等）不受 `WordEnd` 影响。
+- `Boundary` 用于 `parseExpression`；`parseWord` 只接受前三种。`)`/`]`/`,`/`:` 处缺少表达式是 P001。
+- `splitCommandWords` 只切词、不解析：按顶层 `wsBefore` 切分，跟踪 `(`/`[` 深度，遇到语句终止符停止；返回每个词的 range 和 `WordEnd`。命令无参数时返回空 vector。
+- `parseExpression` / `parseWord` 必须整段消费 range；残留 token 按 P004/P001 处理。
 - 有明确 P 错误时错误优先，不转 `Incomplete`；错误/Incomplete 不返回部分 AST。
 
 **语法行为**
 
-- 句子位置是命令；表达式位置是后缀调用。M2 只按语法解析，S008 由 M4 注册表校验。
-- `f(1,2)` 在语句位置是命令 `f` + 一个 Point 参数；`f()` 在语句位置是命令 `f` + 空括号词，`()` 不是合法表达式 → P004。
+- 语句位置只允许 block/if/while/for/break/continue/赋值/命令。单独的 `(`、`[`、字面量、`++`/`--` 等报 P001 在第一个 token；P003/P005 只在表达式位置。
+- 语句位置是命令；表达式位置是后缀调用。M2 只按语法解析，S008 由 M4 注册表校验。
+- `f(1,2)` 在语句位置是命令 `f` + 一个 Point 参数；`f()` → P004 在 `(`。
 - 命令参数按顶层 `wsBefore` 切词，每词优先 `barePoint`，再 `expr`，必须整词消费。
+- P004 位置：
+  - 默认词首 token；
+  - barePoint 坐标本身是非 bare Point 字面量 → 该坐标起点；
+  - 多余坐标 → 词首 token（多余坐标优先于 Point 字面量）；
+  - 具体结构错误保留 P003/P005/P001（括号内尾随/多余逗号、残留闭括号）/P002/S004/S007/S009/L004。
+- barePoint 一旦出现逗号但后续坐标不完整，P004 在词首 token：`line 1,`、`line 1,2,`、`line 1,2,3,`、`line 1, 2`、`line 1,,2` 都是 P004 在 `1`；`line 1 ,2` → P004 在 `,`。
+- 命令词缺少操作数且到达语句终止符/EOF → P002（见 WordEnd）；在空白词边界结束 → P004。例：`line a+ b` P004 在 `a`；`line a+` EOF P002 在 EOF；`line 1?2` EOF P002；`line 1?2 3` P004 在 `1`；`line +` EOF P004 在 `+`；`line -` EOF P002。
+- `line (a + )` / `line f(a + )` / `line [1 + ]` / `line (1 ? 2 : )` → P004 在包含缺失操作数的表达式起点：`(` / `f` / `[` / `(`。
+- 尾随逗号：`line f(1,)` P001 在 `)`；`line [1,]` P001 在 `]`；`line (1,)`、`line (1,2,)`、`line (1,2,3,)` P001 在 `)`。
+- 残留闭括号：`line 1,2)` P001 在 `)`；`line 1,2]` P001 在 `]`；`line (1,2))` P001 在第二个 `)`。
 - 回退规则：
   - `x[0]` 单独一行 → 命令 `x` + 参数 `[0]`（语法合法，未知命令留给 S001）；
-  - `x.y` 单独一行 → 命令 `x` + 词 `.y` → P004 在 `.y`；
+  - `x.y` 单独一行 → P004 在 `.`；
+  - `x++` 单独一行 → P004 在 `++`；`x + 1` → P004 在 `+`；`x == 1` → P004 在 `==`；
   - `p .x = 5` → P004 在 `.x`；
   - `a [0] = 1` → P004 在 `=`。
-- `*` 必须紧贴变量：`x = *h` 合法，`x = * h` 是 P001（在 `h`）；`*h = v` 合法，`* h = v` 是 P001；`*h[0]` 是 P001（在 `[`）。
+- `*` 必须紧贴变量：`x = *h` 合法，`x = * h` 是 P001（在 `h`）；`*h = v` 合法，`* h = v` 是 P001；`*h[0]`、`*h.x`、`*h(1)`、`*h++` → P001 在对应后缀。
 - 前缀 `-`/`!`/`++`/`--` 不要求紧贴；后缀必须紧贴。`i ++` 在表达式位置是 P001（在 `++`）。
-- `++`/`--` 的目标不是变量/元素/成员 → S009；`(x)++` 合法。
+- `++`/`--` 的目标不是变量/元素/成员 → S009 在运算符；Deref 不可赋值；`(x)++` 合法；`line 1++` / `x = 1++` → S009 在 `++`。
+- 紧贴 `.` 后必须是 IDENT；否则 P004 在 `.`（`ref`/`def`/`return` 也不例外）。`.` 后直接是终止符/EOF → P002。`a = x.ref`、`a = x.def` → P004 在 `.`；`a = x .ref` → P001 在 `.`。
 - `a = b = c` → P001 在第二个 `=`。
-- `a = ref` 单独出现，或 `a = ref` 后用普通换行接变量，都是 S004（在 `ref`）；只有显式 `\` 续行才允许 `ref` 与变量拼到同一逻辑行。
-- `ref` 出现在其它位置、左右侧不是简单变量名 → S004（位置在 `ref`）。
-- `def` / `return` 出现在任何位置 → S007（在关键字）。
-- 空语句 `;` 可作为控制语句 body：`if (a);`、`while (a);`、`for (;;);`；`if (a); b = 2` 合法，`b = 2` 是下一条语句。
+- `a = ref` / `a = ref` + 普通换行 + 变量 → S004 在 `ref`；`a = ref \` 续行 + 变量 → 合法；Repl 尾随续行 → `Incomplete(TrailingContinuation)`；`a = ref 1 \` / `a = ref f + \` → S004。
+- `ref` 出现在其它位置、左右侧不是简单变量名 → S004 在 `ref`。
+- `def` / `return` 出现在任何位置 → S007 在关键字；紧贴 `.` 后的成员名位置例外（P004 在 `.`）。
+- `a = 1 b = 2` → P006 在 `b`；`a = 1 2` → P001 在 `2`。
+- 空语句：`if (a);`、`while (a);`、`for (;;);` 合法；`if (a); b = 2` 合法；`a = 1;;b = 2` 第二个 `;` 产生 EmptyStmt；`{};` 的 `;` 是 EmptyStmt。
+- `if (a) b=1; else c=2` 合法；`if (a) b=1;; else c=2` / `if (a) b=1\n; else c=2` / `if (a) {}; else c=2` → P001 在 else；`if (a) {} \n else c=2` 合法。
+- `if (a) {} b=2`、`{ a=1 } b=2` 合法；`if (a) b=1 c=2` → P006 在 c。
+- `for (i=0; i<n; i++)`：init 是 Assign 节点；`for (p.x=0; ...)` P001 在 `.`；`for (i=ref j; ...)` S004；`for (i; ; )` P001 在 `;`；step 赋值 P001 在 `=`。
+- `for i in expr` 后允许换行；`for i in a b` 是 iterable `a`、body 命令 `b`；缺 body 遇 `}` 是 P001 在 `}`。
 - 换行省略位置按 spec §3.8。
 - 语法错误 P001–P006 的位置按 spec §3.9。
 
 **AST dump**
 
 - `--dump-ast <file>` / `--dump-ast -e "<source>"`，使用**脚本模式**。
-- 缩进树；每个节点打印类型、起点和终点的 `line:col`，不打印字节 offset；终点表示最后一个字符之后的位置（end-exclusive）。
-- 字面量保存实际值：int 十进制、double 最短表示、string 转义、bool `true`/`false`。
+- 2 空格缩进；每个节点打印 `类型 [字段] @line:col..line:col`，end-exclusive，不打印字节 offset。
+- 节点名使用 `Command`、`Point`、`BoundaryInt` 等 schema 名称。
+- 固定角色用标签：`target:`、`value:`、`cond:`、`then:`、`else:`、`body:`、`init:`、`step:`、`iterable:`、`callee:`、`args:`、`receiver:`、`index:`、`operand:`、`left:`、`right:`。
+- 可选字段缺失写 `<none>`：`else: <none>`、`init: <none>`、`cond: <none>`、`step: <none>`、`args: <none>`。
+- 可变容器（`Program` / `Block` / `Command` / `Point` / `List`）的子节点直接缩进，不额外加标签。
+- `Deref` 打印 `Deref @...`，其下用 `target:` 包一个 `Variable`。
+- `Member` 打印 `Member name="..." @...`，其下用 `receiver:` 包接收者。
+- 字面量：int 十进制；`BoundaryInt` 不打印值；double 最短往返表示；string 始终加双引号并按 token dump 规则转义；bool `true`/`false`。
 - 空程序 dump 为 `Program @1:1..1:1`；空行不产生节点；显式 `;` 在语句位置产生 `EmptyStmt`，只有作为非空语句终止符的分号不产生节点。
 - 解析失败只打印 §11.2 诊断并退出 1；不打印半成品 AST。
 - `--dump-ast` 与 `--dump-tokens` 互斥；同时给出时按用法错误退出 2。
 - 增加 CTest `lush_dump_ast`。
 
-示例风格：
+示例：
 
 ```text
 Program @1:1..1:9
-  CommandStmt name="line" @1:1..1:9
-    BarePoint @1:6..1:9
+  Command name="line" @1:1..1:9
+    Point bare=true @1:6..1:9
       Int 0 @1:6..1:7
       Int 0 @1:8..1:9
+```
+
+其他节点示例：
+
+```text
+Assign @...
+  target:
+    Variable name="a" @...
+  value:
+    Int 1 @...
+
+For @...
+  init:
+    Assign @...
+      target:
+        Variable name="i" @...
+      value:
+        Int 0 @...
+  cond:
+    Binary op="<" @...
+      left:
+        Variable name="i" @...
+      right:
+        Variable name="n" @...
+  step:
+    IncDec op="++" prefix=false @...
+      target:
+        Variable name="i" @...
+  body:
+    Block @...
+      ...
+
+RefAssign target="h" source="f" @...
+EmptyStmt @...
+BoundaryInt @...
 ```
 
 **测试**
 
 - spec 中所有语法示例；
-- `line a - b`、`line -1 -2`、`line 1,2 3,4`、`line 1, 2`；
-- `line(1,2)`、`type(4.4)(2)`、`(type(1))(2)`；
-- 语句位置 `f(1,2)` 是命令 + Point 参数；`f()` → P004；
-- `line 1,2,3,4` → P004 在词起点；`line (1,2,3,4)` → P003 在 `(`；`line (1,2),3` → P004；
+- 语句位置 vs 表达式位置：单独的 `(1,2]`、`(1,2,3,4)`、`1++`、`(x)++` → P001 在首 token；`a = (1,2]` → P005 在 `]`；`a = (1,2,3,4)` → P003 在 `(`；
+- `line a - b`、`line -1 -2`、`line 1,2 3,4`、`line 1, 2`、`line 1 ,2`、`line 1,,2`、`line 1,2,3,4`；
+- `line(1,2)` 在语句位置是命令 + Point；表达式位置 `x = type(4.4)(2)`、`x = (type(1))(2)` 是链式调用；单独 `(type(1))(2)` 在语句位置是 P001；
+- 语句位置 `f(1,2)` 是命令 + Point 参数；`f()` → P004 在 `(`；
+- P004 位置：`line 1,2,3,4` → `1`；`line 1,(2,3)` → 第二个坐标的 `(`；`line ((1,2)),3` / `line 1,((2,3))` → 坐标起点 `(`；`line 1,2,(3,4)` → `(`；`line 1,2,3,(4,5)` → `1`；`line 1,2,3,` / `line 1,2,` / `line 1,` → `1`；`line a+ b` → `a`；
+- 词边界 vs 输入结束：`line a+` EOF → P002；`line 1?2` EOF → P002；`line 1?2 3` → P004 在 `1`；`line +` EOF → P004 在 `+`；`line -` EOF → P002；`line * h` → P004 在 `*`；
+- 命令词内部缺少操作数：`line (a + )` → P004 在 `(`；`line f(a + )` → P004 在 `f`；`line [1 + ]` → P004 在 `[`；`line (1 ? 2 : )` → P004 在 `(`；
+- 尾随逗号：`line f(1,)` → P001 在 `)`；`line [1,]` → P001 在 `]`；`line (1,)`、`line (1,2,)`、`line (1,2,3,)` → P001 在 `)`；
+- 残留闭括号：`line 1,2)` → P001 在 `)`；`line 1,2]` → P001 在 `]`；`line (1,2))` → P001 在第二个 `)`；
 - `p = point [1,2]` → P001 在 `[`；
-- `x = *h` / `echo *r` 合法；`x = * h`、`* h = v`、`*h[0]` → P001；
-- 表达式位置 `y = (x)++` 合法；`x = 1++` → S009；单独一行 `1++` / `(x)++` 是 P001（裸表达式不是语句）；
+- `x = *h` / `echo *r` 合法；`x = * h`、`* h = v`、`*h[0]`、`*h.x`、`*h(1)`、`*h++` → P001；
+- 表达式位置 `y = (x)++` 合法；`x = 1++` / `line 1++` → S009 在 `++`；单独一行 `1++` / `(x)++` 是 P001（裸表达式不是语句）；表达式位置 `x = (*h)++` → S009，`*h++` → P001；
+- 成员：`a = x.ref`、`a = x.def` → P004 在 `.`；`a = x .ref` → P001 在 `.`；`a = x.` → P002；`a = x.;` → P002 在 `;`；
 - `a = b = c` → P001 在第二个 `=`；
 - `a = 1 b = 2` → P006 在 `b`；`a = 1 2` → P001 在 `2`；
-- `(1,2]` → P005 在 `]`；顶层 `)` → P001；
-- `x[0]` 回退为命令 `x` + `[0]`；`x.y` → P004 在 `.y`；`p .x = 5` → P004 在 `.x`；`a [0] = 1` → P004 在 `=`；
-- `a = ref` / `a = ref` + 普通换行 + 变量 → S004；`a = ref \` 续行 + 变量 → 合法；
-- `def` / `return` → S007；
-- `if (a);`、`while (a);`、`for (;;);`、`if (a); else b = 2` 合法；`if (a); b = 2` 合法；`a = 1;;b = 2` 中的第二个 `;` 产生 `EmptyStmt`；
-- Repl `a = ref \` 续行结尾 → `Incomplete`；没有续行的 `a = ref` → S004；
+- `x[0]` 回退为命令 `x` + `[0]`；`x.y` → P004 在 `.`；`x++` → P004 在 `++`；`x + 1` → P004 在 `+`；`x == 1` → P004 在 `==`；`p .x = 5` → P004 在 `.x`；`a [0] = 1` → P004 在 `=`；
+- `a = ref` / `a = ref` + 普通换行 + 变量 → S004；`a = ref \` 续行 + 变量 → 合法；`a = ref 1 \` / `a = ref f + \` / `a = ref ; \` → S004；Repl `a = ref \` 尾随 → `Incomplete`；Repl `a = ref \` + 注释行 + EOF → `Incomplete`；
+- `def` / `return` → S007；`a = x.def` 例外为 P004；
+- `if (a);`、`while (a);`、`for (;;);`、`if (a); else b = 2` 合法；`if (a); b = 2` 合法；`a = 1;;b = 2` 中的第二个 `;` 产生 `EmptyStmt`；`{};` 产生 `EmptyStmt`；
+- `if (a) b=1; else c=2` 合法；`if (a) b=1;; else c=2` / `if (a) b=1\n; else c=2` / `if (a) {}; else c=2` → P001 在 else；`if (a) {} \n else c=2` 合法；
+- `if (a) {} b=2`、`{ a=1 } b=2` 合法；`if (a) b=1 c=2` → P006 在 c；
+- `for (i=0; i<n; i++)` 的 init 是 Assign；`for (p.x=0; ...)` → P001 在 `.`；`for (i=ref j; ...)` → S004；`for (i; ; )` → P001 在 `;`；`for (;; i=i+1)` → P001 在 `=`；`for i in expr` 后换行合法；`for i in a b` 是 iterable `a` + body `b`；缺 body 遇 `}` → P001；
+- Lexer：`endsWithContinuation` / `lastContinuationOffset` 覆盖合法续行、注释/空行、多个续行、L005；
 - 多行块；
-- Repl 未闭合 `{}` / `()` / `[]` → `Incomplete(Unclosed*)`；
-- Repl 尾随 `\` → `Incomplete(TrailingContinuation)`；
+- Repl 未闭合 `{}` / `()` / `[]` → `Incomplete(Unclosed*)`，多个未闭合取最内层；
+- Repl 尾随 `\` / L005 → `Incomplete(TrailingContinuation)`；
 - Repl `if (true)` / `for (;;)` EOF → `Incomplete(NeedStatement)`；`if (a) else ...` → P001；
-- 脚本 EOF 未闭合 → P002；脚本 `if (true)` EOF → P002；
-- AST dump 覆盖命令、赋值、if/else、循环、ref、Point/barePoint、list、EmptyStmt；
+- Repl Incomplete 优先级：确定错误 > Unclosed* > NeedStatement > TrailingContinuation > P002；
+- 脚本 EOF 未闭合 → P002；脚本 `if (true)` EOF → P002；脚本 `a = 1 \` + 换行 + EOF 合法；脚本 `a = 1 + \` + 换行 + EOF → P002；
+- AST dump 覆盖命令、赋值、if/else、while、for-in、C 风格 for、ref、Point/barePoint、list、EmptyStmt、BoundaryInt、成员/索引/调用/三元/IncDec/Deref；
+- AST dump 的 `Program`/`Command`/`Point`/`Assign`/`For`/`RefAssign`/`EmptyStmt` 文本按本文格式精确断言；
+- `parseWord` 的 `WordBoundary` / `StatementTerminator` / `InputEnd` 三种结果；
+- `parseExpression` 的 `Boundary`：`)`/`]`/`,`/`:` 处缺少表达式为 P001；
 - G15/G16/G34/G46 的解析结果符合 spec。
 
 **完成标准**
 
 - `unit_parser` 全绿；
-- `--dump-ast` 可用于人工核对；
+- `--dump-ast` 可用于人工核对，dump 文本是单元测试的精确契约；
 - 解析阶段不执行、不注册命令；
 - `/W4` 无警告。
 
 **边界**
 
 - 只做语法层；求值、命令绑定、会话都不在 M2。
-- 命令参数切词在 Parser 中完成，Lexer 只提供 `wsBefore`、Token 和末尾续行标记。
+- 命令参数切词在 Parser 中完成，Lexer 只提供 `wsBefore`、Token、`endsWithContinuation` 和 `endOffset`。
 
 ---
 

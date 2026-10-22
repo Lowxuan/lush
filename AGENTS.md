@@ -4,13 +4,13 @@
 
 ## 先读什么
 
-- **语义唯一来源：`docs/spec.md`（v0.3.2）。** 代码与 spec 冲突时以 spec 为准；要改语义，先改 spec 和 golden，再改代码。
+- **语义唯一来源：`docs/spec.md`（v0.3.3）。** 代码与 spec 冲突时以 spec 为准；要改语义，先改 spec 和 golden，再改代码。
 - `docs/steps.md`：M1–M6 开发里程碑、文件、任务、测试与完成标准。
 - `README.md`：构建入口。
 - `start.md` / `teaching.md`：历史需求与选型讨论，**不是规范**。`teaching.md` 里推荐的 peglib / ANTLR / Lua 等均未采用；本项目使用手写递归下降 + 优先级爬升，零第三方依赖。
 - **`docs/spec.md` 是 UTF-8。** 直接按 UTF-8 读取；不要按 GBK/cp936 解码。
 
-spec 很长（约 1900 行），按需读：§0.1 决策表、§2–§8 语义、§11.1 错误码、§12 补全、§15 golden G01–G52。
+spec 很长（约 2100 行），按需读：§0.1 决策表、§2–§8 语义、§11.1 错误码、§12 补全、§15 golden G01–G52。
 
 ## 当前状态（不要假设功能已存在）
 
@@ -19,6 +19,7 @@ spec 很长（约 1900 行），按需读：§0.1 决策表、§2–§8 语义�
   - CLI 支持 `--version`、`--help`、`--dump-tokens <file>`、`--dump-tokens -e "<source>"`；
   - 仍无 REPL、无脚本执行模式；`-e` 只用于 `--dump-tokens`；普通文件路径仍报 `unknown option` 并退出 2。
 - 语法 / 求值 / 命令 / 会话 / 补全**尚未实现**。
+- **M2 的语法/AST/Parser/dump 规则已在 `docs/spec.md` 0.3.3 和 `docs/steps.md` 定稿，但代码尚未开始。** 下一步按 steps 实现 M2；不要提前写 M3 求值或 M4 命令系统。
 - spec §15 的 G01–G52 是规范/目标，**不是可运行测试**；不要声称它们已通过。
 - 当前 `lush_tests` 有 20 个测试；CTest 有三个目标：`lush_tests`、`lush_version`、`lush_dump_tokens`。
 - 下一步是 **M2（语法/AST/Parser）**。不要在 M2 阶段提前写 M4 的命令系统。
