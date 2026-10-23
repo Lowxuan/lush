@@ -1,10 +1,18 @@
 #pragma once
 
 #include "lush/core/ast.h"
+#include "lush/core/builtins.h"
+#include "lush/core/cell.h"
+#include "lush/core/checked.h"
 #include "lush/core/diagnostic.h"
+#include "lush/core/eval.h"
+#include "lush/core/format.h"
 #include "lush/core/lexer.h"
+#include "lush/core/output.h"
 #include "lush/core/parser.h"
 #include "lush/core/source.h"
 #include "lush/core/token.h"
 #include "lush/core/utf8.h"
+#include "lush/core/validate.h"
+#include "lush/core/value.h"
 #include "lush/core/version.h"

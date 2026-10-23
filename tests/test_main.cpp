@@ -43,12 +43,13 @@ int main() {
 
         if (lush::test::failures != before) {
             ++failedTests;
-            std::cerr << "[FAIL] " << test.name << '\n';
+            std::cerr << "[FAIL] " << test.name << std::endl;
         } else {
-            std::cout << "[ OK ] " << test.name << '\n';
+            std::cout << "[ OK ] " << test.name << std::endl;
         }
     }
 
-    std::cout << tests.size() << " tests, " << failedTests << " failed\n";
+    std::cout << tests.size() << " tests, " << failedTests << " failed"
+              << std::endl;
     return failedTests == 0 ? 0 : 1;
 }

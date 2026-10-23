@@ -14,14 +14,14 @@ spec 很长（约 2220 行），按需读：§0.1 决策表、§2–§8 语义�
 
 ## 当前状态（不要假设功能已存在）
 
-- **M0、M1、M2 已完成**：
-  - `lush_core` 已实现 `utf8`、`source`、`diagnostic`、`token`、`lexer`、`version`、`ast`、`parser`；
+- **M0、M1、M2、M3 已完成**：
+  - `lush_core` 已实现 `utf8`、`source`、`diagnostic`、`token`、`lexer`、`version`、`ast`、`parser`、`value`、`cell`、`validate`、`eval`、`format`、`builtins`、`checked`、`output`；
   - CLI 支持 `--version`、`--help`、`--dump-tokens <file>`、`--dump-tokens -e "<source>"`、`--dump-ast <file>`、`--dump-ast -e "<source>"`；
   - 仍无 REPL、无脚本执行模式；`-e` 只用于 `--dump-tokens` / `--dump-ast`；普通文件路径仍报 `unknown option` 并退出 2。
-- 求值 / 命令 / 会话 / 补全**尚未实现**。
-- M2 的 AST/Parser 规则已在 `docs/spec.md` 0.3.4 和 `docs/steps.md` 实现并测试。下一步是 **M3（值、环境、求值、内建）**；不要提前写 M4 的命令系统。
-- spec §15 的 G01–G52 是规范/目标，**不是可运行测试**；不要声称它们已通过。
-- 当前 `lush_tests` 有 45 个测试；CTest 有四个目标：`lush_tests`、`lush_version`、`lush_dump_tokens`、`lush_dump_ast`。
+- 命令 / 会话 / 补全**尚未实现**；M3 的 `Command` 只支持 `echo`，`lush file.lush` / `lush -e` 留 M5。
+- M2 的 AST/Parser 规则和 M3 的求值规则已在 `docs/spec.md` 0.3.4 和 `docs/steps.md` 实现并测试。下一步是 **M4（命令注册与参考宿主）**；不要提前写 M5 的会话/REPL。
+- spec §15 的 G01–G52 中，M3 的非命令 golden 已在 `tests/golden_spec.cpp` 落地；命令/会话 golden 仍待 M4/M5，不要声称全部通过。
+- 当前 `lush_tests` 有 142 个测试；CTest 有四个目标：`lush_tests`、`lush_version`、`lush_dump_tokens`、`lush_dump_ast`。
 
 M1 词法实现约定（已完成）：
 
@@ -36,6 +36,15 @@ M2 语法实现约定（已完成）：
 - `ast.h/.cpp`：节点带 Span，表达式 Span 包含外层分组括号（`BoundaryInt` 例外，只覆盖字面量）；`BoundaryInt` 只允许在 `Unary(-, ...)` 中。
 - `parser.h/.cpp`：`parse`、`parseExpression`、`parseWord`、`splitCommandWords`，`Incomplete` 取最内层未闭合定界符；P002/P004 与词边界规则按 spec 0.3.4。
 - `--dump-ast` 使用脚本模式，解析失败只输出诊断并退出 1；`--dump-ast` 与 `--dump-tokens` 互斥。
+
+M3 求值实现约定（已完成）：
+
+- `ast.h` 增加 `NodeKind` 和 `Node::kind()`；`value.h` 的运行时类型是 `ListValue` / `PointValue`，避免与 AST 的 `List` / `Point` 节点重名。
+- `Value` 是 int64/double/bool/string/ListValue/PointValue/callable；`ListValue` 深拷贝，callable 按身份比较。
+- `Cell`/`Env`：`Cell` 持有值或单层引用，`hasInboundRef` 永不清除；`Env` 作用域链大小写敏感。
+- 普通赋值 target-first；目标路径里的后缀 `++`/`--` 延迟到写入后提交，RHS 的后缀立即写回；`ref` 与 `for` init 例外。
+- `validate` 实现 S001（M3 catalog 范围）、S003、S005、S008；`eval` 实现运行时 R001–R009、R012 和 `echo`。
+- M3 测试走库内 API：`tests/eval_test_utils.h` 组合 Lexer/parse/validate/eval，`StringOutput` 捕获输出；golden 位置按 spec §11.3 断言。
 
 ## 构建 / 测试
 
@@ -62,6 +71,7 @@ ctest --preset vs2022-debug --output-on-failure
   - Ninja：`build/ninja-debug/bin/lush.exe`
 - **测试没有单测过滤参数。** `lush_tests.exe` 忽略命令行参数，总是跑完全部注册测试。CTest 只能按测试名过滤（当前有 `lush_tests`、`lush_version`、`lush_dump_tokens`），例如 `ctest --preset vs2022-debug -R lush_version`。
 - **新增 `.cpp` 必须手动写进 CMake**：`src/CMakeLists.txt` 或 `tests/CMakeLists.txt`；项目不用 `GLOB`，只放文件不会参与构建。
+- **改类布局/虚函数集合/头文件内联实现后必须 clean rebuild**：`ast.h` 加虚函数曾使 Ninja 旧对象与新头文件的 vtable 不一致，运行时 `SIGSEGV at 0x0`。用 `cmake --build --preset <preset> --clean-first`（或删对应 `build/` 目录）重编所有 TU；不要混用不同 build/配置的 `.obj`/`.lib`。一个配置崩、另一个正常时，先 clean 再查源码。
 - `/W4` 目标零警告；`LUSH_WERROR=ON` 可升级为错误，但不要靠关闭警告来通过。
 
 ## 目录与依赖
@@ -109,6 +119,7 @@ tests/                单一 lush_tests 可执行文件
 ## 测试约定
 
 - 在 `tests/unit_*.cpp` 里用 `LUSH_TEST(name) { ... }` 注册；`LUSH_CHECK` / `LUSH_CHECK_EQ` 断言。
+- M3 的 golden 是库内测试：`tests/golden_spec.cpp` 直接链接 `lush_core`，组合 `Lexer` → `parse` → `validate` → `evalProgram`，用 `StringOutput` 捕获输出；M3 **不新增 CLI 执行入口**，`lush file.lush` / `lush -e` 留 M5。
 - 新测试文件要加进 `tests/CMakeLists.txt` 的 `lush_tests` 源列表。
 - 每个 bug 修复补回归测试；每个错误码至少一个用例。
 - 测试名尽量对应 spec 编号（如 `G22`、`L004`），方便追溯。

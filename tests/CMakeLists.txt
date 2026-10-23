@@ -3,6 +3,10 @@ add_executable(lush_tests
     unit_smoke.cpp
     unit_lexer.cpp
     unit_parser.cpp
+    unit_value.cpp
+    unit_ref.cpp
+    unit_eval.cpp
+    golden_spec.cpp
 )
 
 target_link_libraries(lush_tests PRIVATE lush::core)

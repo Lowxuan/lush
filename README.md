@@ -4,7 +4,7 @@
 
 - 语言规范：[docs/spec.md](docs/spec.md)
 - 开发里程碑：[docs/steps.md](docs/steps.md)
-- 当前状态：**M2 已完成**（M1 词法 + M2 AST/Parser/`--dump-ast`；求值、命令、REPL 尚未实现）
+- 当前状态：**M3 已完成**（M1 词法 + M2 AST/Parser/`--dump-ast` + M3 值/环境/求值/内建；命令、REPL、补全尚未实现）
 
 ## 环境
 
@@ -41,10 +41,10 @@ ctest --test-dir build -C Debug --output-on-failure
 
 ## 目录
 
-- `src/lush/core/`：语言核心（已实现 UTF-8、Source、Diagnostic、Token、Lexer、AST、Parser；求值待实现）
+- `src/lush/core/`：语言核心（已实现 UTF-8、Source、Diagnostic、Token、Lexer、AST、Parser、Value、Cell/Env、Eval、Validate、格式化和内建）
 - `src/lush/command/`：命令注册、参数绑定、会话（计划）
 - `src/lush/driver/`：脚本 / REPL 执行状态机（计划）
 - `src/lush/completion/`：补全（计划）
 - `src/lush/`：公共头
-- `src/cli/`：命令行前端
-- `tests/`：单元测试（golden tests 待后续里程碑实现）
+- `src/cli/`：命令行前端（M3 暂不提供脚本执行入口）
+- `tests/`：单元测试（M3 非命令 golden 已落地；命令/会话 golden 待 M4/M5）

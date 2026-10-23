@@ -9,12 +9,12 @@
 | M0 构建骨架 | ✅ 已完成 | CMake presets、CLI 占位、测试 harness、CTest |
 | M1 词法 | ✅ 已完成 | UTF-8、Source、Diagnostic、Token、Lexer、`--dump-tokens` |
 | M2 语法 | ✅ 已完成 | AST、Parser、命令参数切词、`Incomplete`、`--dump-ast`；`unit_parser` 全绿 |
-| M3 求值 | ⬜ 下一步 | Value、Cell/Env、Eval、格式化、内建、非命令 golden |
-| M4 命令 | ⬜ 未开始 | 命令 spec/registry、参考宿主、命令 golden |
+| M3 求值 | ✅ 已完成 | Value、Cell/Env、Eval、Validate、格式化、内建、非命令 golden |
+| M4 命令 | ⬜ 下一步 | 命令 spec/registry、参考宿主、命令 golden |
 | M5 会话 / REPL | ⬜ 未开始 | Session、Driver、脚本/REPL CLI |
 | M6 补全 | ⬜ 未开始 | 补全上下文与候选 API |
 
-M1、M2 已完成：`lush_tests` 当前 45 个测试，CTest 目标为 `lush_tests`、`lush_version`、`lush_dump_tokens`、`lush_dump_ast`。下一步是 M3（求值）。
+M1、M2、M3 已完成：`lush_tests` 当前 142 个测试，CTest 目标为 `lush_tests`、`lush_version`、`lush_dump_tokens`、`lush_dump_ast`。下一步是 M4（命令注册与参考宿主）。
 
 ---
 
@@ -356,7 +356,7 @@ BoundaryInt @...
 
 ---
 
-## M3 — 值、环境、求值、内建
+## M3 — 值、环境、求值、内建（已完成）
 
 **目标**：实现 v1 的值模型、环境/作用域、表达式求值、语句执行、格式化与内建函数；不依赖参考宿主即可跑通非命令 golden。
 
@@ -394,6 +394,7 @@ BoundaryInt @...
 **测试**
 
 - 非命令 golden：G01–G10、G17–G19、G29–G32、G38–G43、G45–G49。
+- 测试接口：不新增 CLI 执行入口；`golden_spec` 直接链接 `lush_core`，组合 `Lexer` → `parse` → `validate` → `evalProgram`，用 `StringOutput` 捕获输出与诊断。`lush file.lush` / `lush -e` 留 M5。
 - `ref` 专项：G04–G07、G35–G36、G50–G52。
 - 只读成员/索引、越界、除零、溢出、`INT64_MIN`。
 - target-first：`a[i] = i++`、`a[i++] = i`、`a[i++] = i++`、`a[i++] = i++ + i`；目标错误优先；RHS/写入失败时仍提交目标后缀；多重目标后缀；`i = i++` 保持旧值。
@@ -414,6 +415,7 @@ BoundaryInt @...
 **边界**
 
 - 不实现命令注册表、交互会话或 CLI 脚本模式；
+- M3 不新增 CLI 执行入口；`lush file.lush` / `lush -e` 留 M5；
 - `echo` 是 core 内建命令，但完整命令系统在 M4；
 - M3 的 `Command` 只支持 `echo`；语句位置的内建函数调用（`int 1`）留 M4。
 

@@ -41,6 +41,37 @@ enum class IncDecOp {
     Decrement,
 };
 
+enum class NodeKind {
+    Program,
+    Block,
+    If,
+    While,
+    ForIn,
+    For,
+    Break,
+    Continue,
+    Assign,
+    RefAssign,
+    Command,
+    EmptyStmt,
+    Int,
+    BoundaryInt,
+    Float,
+    String,
+    Bool,
+    Variable,
+    Unary,
+    Binary,
+    Ternary,
+    Call,
+    Index,
+    Member,
+    IncDec,
+    Deref,
+    Point,
+    List,
+};
+
 std::string_view unaryOpName(UnaryOp op) noexcept;
 std::string_view binaryOpName(BinaryOp op) noexcept;
 std::string_view incDecOpName(IncDecOp op) noexcept;
@@ -112,6 +143,7 @@ struct Node {
     Span span{};
     virtual ~Node() = default;
     virtual void accept(AstVisitor& visitor) const = 0;
+    virtual NodeKind kind() const noexcept = 0;
 };
 
 struct Stmt : Node {};
@@ -123,31 +155,37 @@ using ExprPtr = std::unique_ptr<Expr>;
 struct Int : Expr {
     std::int64_t value = 0;
     void accept(AstVisitor& visitor) const override { visitor.visit(*this); }
+    NodeKind kind() const noexcept override { return NodeKind::Int; }
 };
 
 struct BoundaryInt : Expr {
     Span literalSpan{};
     void accept(AstVisitor& visitor) const override { visitor.visit(*this); }
+    NodeKind kind() const noexcept override { return NodeKind::BoundaryInt; }
 };
 
 struct Float : Expr {
     double value = 0.0;
     void accept(AstVisitor& visitor) const override { visitor.visit(*this); }
+    NodeKind kind() const noexcept override { return NodeKind::Float; }
 };
 
 struct String : Expr {
     std::string value;
     void accept(AstVisitor& visitor) const override { visitor.visit(*this); }
+    NodeKind kind() const noexcept override { return NodeKind::String; }
 };
 
 struct Bool : Expr {
     bool value = false;
     void accept(AstVisitor& visitor) const override { visitor.visit(*this); }
+    NodeKind kind() const noexcept override { return NodeKind::Bool; }
 };
 
 struct Variable : Expr {
     Name name;
     void accept(AstVisitor& visitor) const override { visitor.visit(*this); }
+    NodeKind kind() const noexcept override { return NodeKind::Variable; }
 };
 
 struct Unary : Expr {
@@ -155,6 +193,7 @@ struct Unary : Expr {
     Span opSpan{};
     ExprPtr operand;
     void accept(AstVisitor& visitor) const override { visitor.visit(*this); }
+    NodeKind kind() const noexcept override { return NodeKind::Unary; }
 };
 
 struct Binary : Expr {
@@ -163,6 +202,7 @@ struct Binary : Expr {
     ExprPtr left;
     ExprPtr right;
     void accept(AstVisitor& visitor) const override { visitor.visit(*this); }
+    NodeKind kind() const noexcept override { return NodeKind::Binary; }
 };
 
 struct Ternary : Expr {
@@ -172,6 +212,7 @@ struct Ternary : Expr {
     Span questionSpan{};
     Span colonSpan{};
     void accept(AstVisitor& visitor) const override { visitor.visit(*this); }
+    NodeKind kind() const noexcept override { return NodeKind::Ternary; }
 };
 
 struct Call : Expr {
@@ -180,6 +221,7 @@ struct Call : Expr {
     Span lparenSpan{};
     Span rparenSpan{};
     void accept(AstVisitor& visitor) const override { visitor.visit(*this); }
+    NodeKind kind() const noexcept override { return NodeKind::Call; }
 };
 
 struct Index : Expr {
@@ -188,12 +230,14 @@ struct Index : Expr {
     Span openSpan{};
     Span closeSpan{};
     void accept(AstVisitor& visitor) const override { visitor.visit(*this); }
+    NodeKind kind() const noexcept override { return NodeKind::Index; }
 };
 
 struct Member : Expr {
     ExprPtr receiver;
     Name member;
     void accept(AstVisitor& visitor) const override { visitor.visit(*this); }
+    NodeKind kind() const noexcept override { return NodeKind::Member; }
 };
 
 struct IncDec : Expr {
@@ -202,28 +246,33 @@ struct IncDec : Expr {
     Span opSpan{};
     ExprPtr target;
     void accept(AstVisitor& visitor) const override { visitor.visit(*this); }
+    NodeKind kind() const noexcept override { return NodeKind::IncDec; }
 };
 
 struct Deref : Expr {
     Span starSpan{};
     std::unique_ptr<Variable> variable;
     void accept(AstVisitor& visitor) const override { visitor.visit(*this); }
+    NodeKind kind() const noexcept override { return NodeKind::Deref; }
 };
 
 struct Point : Expr {
     std::vector<ExprPtr> coordinates;
     bool bare = false;
     void accept(AstVisitor& visitor) const override { visitor.visit(*this); }
+    NodeKind kind() const noexcept override { return NodeKind::Point; }
 };
 
 struct List : Expr {
     std::vector<ExprPtr> elements;
     void accept(AstVisitor& visitor) const override { visitor.visit(*this); }
+    NodeKind kind() const noexcept override { return NodeKind::List; }
 };
 
 struct Block : Stmt {
     std::vector<StmtPtr> statements;
     void accept(AstVisitor& visitor) const override { visitor.visit(*this); }
+    NodeKind kind() const noexcept override { return NodeKind::Block; }
 };
 
 struct If : Stmt {
@@ -231,12 +280,14 @@ struct If : Stmt {
     StmtPtr thenBranch;
     StmtPtr elseBranch;
     void accept(AstVisitor& visitor) const override { visitor.visit(*this); }
+    NodeKind kind() const noexcept override { return NodeKind::If; }
 };
 
 struct While : Stmt {
     ExprPtr cond;
     StmtPtr body;
     void accept(AstVisitor& visitor) const override { visitor.visit(*this); }
+    NodeKind kind() const noexcept override { return NodeKind::While; }
 };
 
 struct Assign : Stmt {
@@ -244,6 +295,7 @@ struct Assign : Stmt {
     ExprPtr value;
     Span assignSpan{};
     void accept(AstVisitor& visitor) const override { visitor.visit(*this); }
+    NodeKind kind() const noexcept override { return NodeKind::Assign; }
 };
 
 struct RefAssign : Stmt {
@@ -251,24 +303,29 @@ struct RefAssign : Stmt {
     Name source;
     Span refSpan{};
     void accept(AstVisitor& visitor) const override { visitor.visit(*this); }
+    NodeKind kind() const noexcept override { return NodeKind::RefAssign; }
 };
 
 struct Command : Stmt {
     Name name;
     std::vector<ExprPtr> args;
     void accept(AstVisitor& visitor) const override { visitor.visit(*this); }
+    NodeKind kind() const noexcept override { return NodeKind::Command; }
 };
 
 struct EmptyStmt : Stmt {
     void accept(AstVisitor& visitor) const override { visitor.visit(*this); }
+    NodeKind kind() const noexcept override { return NodeKind::EmptyStmt; }
 };
 
 struct Break : Stmt {
     void accept(AstVisitor& visitor) const override { visitor.visit(*this); }
+    NodeKind kind() const noexcept override { return NodeKind::Break; }
 };
 
 struct Continue : Stmt {
     void accept(AstVisitor& visitor) const override { visitor.visit(*this); }
+    NodeKind kind() const noexcept override { return NodeKind::Continue; }
 };
 
 struct ForIn : Stmt {
@@ -276,6 +333,7 @@ struct ForIn : Stmt {
     ExprPtr iterable;
     StmtPtr body;
     void accept(AstVisitor& visitor) const override { visitor.visit(*this); }
+    NodeKind kind() const noexcept override { return NodeKind::ForIn; }
 };
 
 struct For : Stmt {
@@ -284,11 +342,13 @@ struct For : Stmt {
     ExprPtr step;
     StmtPtr body;
     void accept(AstVisitor& visitor) const override { visitor.visit(*this); }
+    NodeKind kind() const noexcept override { return NodeKind::For; }
 };
 
 struct Program : Node {
     std::vector<StmtPtr> statements;
     void accept(AstVisitor& visitor) const override { visitor.visit(*this); }
+    NodeKind kind() const noexcept override { return NodeKind::Program; }
 };
 
 std::string dumpAst(const Program& program, const Source& source);

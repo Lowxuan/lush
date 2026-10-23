@@ -6,6 +6,11 @@ add_library(lush_core STATIC
     lush/core/lexer.cpp
     lush/core/ast.cpp
     lush/core/parser.cpp
+    lush/core/value.cpp
+    lush/core/format.cpp
+    lush/core/builtins.cpp
+    lush/core/validate.cpp
+    lush/core/eval.cpp
 )
 
 target_include_directories(lush_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
