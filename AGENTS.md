@@ -4,13 +4,13 @@
 
 ## 先读什么
 
-- **语义唯一来源：`docs/spec.md`（v0.3.3）。** 代码与 spec 冲突时以 spec 为准；要改语义，先改 spec 和 golden，再改代码。
+- **语义唯一来源：`docs/spec.md`（v0.3.4）。** 代码与 spec 冲突时以 spec 为准；要改语义，先改 spec 和 golden，再改代码。
 - `docs/steps.md`：M1–M6 开发里程碑、文件、任务、测试与完成标准。
 - `README.md`：构建入口。
 - `start.md` / `teaching.md`：历史需求与选型讨论，**不是规范**。`teaching.md` 里推荐的 peglib / ANTLR / Lua 等均未采用；本项目使用手写递归下降 + 优先级爬升，零第三方依赖。
 - **`docs/spec.md` 是 UTF-8。** 直接按 UTF-8 读取；不要按 GBK/cp936 解码。
 
-spec 很长（约 2100 行），按需读：§0.1 决策表、§2–§8 语义、§11.1 错误码、§12 补全、§15 golden G01–G52。
+spec 很长（约 2220 行），按需读：§0.1 决策表、§2–§8 语义、§11.1 错误码、§12 补全、§15 golden G01–G52。
 
 ## 当前状态（不要假设功能已存在）
 
@@ -19,7 +19,7 @@ spec 很长（约 2100 行），按需读：§0.1 决策表、§2–§8 语义�
   - CLI 支持 `--version`、`--help`、`--dump-tokens <file>`、`--dump-tokens -e "<source>"`、`--dump-ast <file>`、`--dump-ast -e "<source>"`；
   - 仍无 REPL、无脚本执行模式；`-e` 只用于 `--dump-tokens` / `--dump-ast`；普通文件路径仍报 `unknown option` 并退出 2。
 - 求值 / 命令 / 会话 / 补全**尚未实现**。
-- M2 的 AST/Parser 规则已在 `docs/spec.md` 0.3.3 和 `docs/steps.md` 实现并测试。下一步是 **M3（值、环境、求值、内建）**；不要提前写 M4 的命令系统。
+- M2 的 AST/Parser 规则已在 `docs/spec.md` 0.3.4 和 `docs/steps.md` 实现并测试。下一步是 **M3（值、环境、求值、内建）**；不要提前写 M4 的命令系统。
 - spec §15 的 G01–G52 是规范/目标，**不是可运行测试**；不要声称它们已通过。
 - 当前 `lush_tests` 有 45 个测试；CTest 有四个目标：`lush_tests`、`lush_version`、`lush_dump_tokens`、`lush_dump_ast`。
 
@@ -34,7 +34,7 @@ M2 语法实现约定（已完成）：
 
 - `LexResult` 额外携带 `endsWithContinuation`、`lastContinuationOffset`、`endOffset`。
 - `ast.h/.cpp`：节点带 Span，表达式 Span 包含外层分组括号（`BoundaryInt` 例外，只覆盖字面量）；`BoundaryInt` 只允许在 `Unary(-, ...)` 中。
-- `parser.h/.cpp`：`parse`、`parseExpression`、`parseWord`、`splitCommandWords`，`Incomplete` 取最内层未闭合定界符；P002/P004 与词边界规则按 spec 0.3.3。
+- `parser.h/.cpp`：`parse`、`parseExpression`、`parseWord`、`splitCommandWords`，`Incomplete` 取最内层未闭合定界符；P002/P004 与词边界规则按 spec 0.3.4。
 - `--dump-ast` 使用脚本模式，解析失败只输出诊断并退出 1；`--dump-ast` 与 `--dump-tokens` 互斥。
 
 ## 构建 / 测试
@@ -97,8 +97,9 @@ tests/                单一 lush_tests 可执行文件
 - **`(x,y)` 是 Point，`[...]` 是 list**；裸 `x,y` 只允许出现在命令参数位置，且坐标之间不能有空格。
 - **语句终止符**是换行 / `;` / `}` / `else` / EOF；`\` 是唯一显式续行。`(` / `[` 内抑制 NL，**`{}` 不抑制**。
 - **值语义**：读取/赋值默认深拷贝，`list` 的 `shared_ptr` 必须自定义拷贝构造/赋值来克隆；`ref` 是唯一别名机制，v1 只支持单层，`hasInboundRef` 一旦置位不清除（R008）。
+- **赋值先求目标**：普通赋值先求目标路径，再求 RHS；目标路径里的后缀 `++`/`--` 延迟到赋值写入后提交，RHS 的后缀仍立即写回。`a[i] = i++` 与 `a[i++] = i` 的 RHS 都是旧 `i`。`ref` 与 `for` init 例外（RHS-first）。
 - **数值**：int64 + double；`2/4 == 0`、`2/4.0 == 0.5`；整数运算要检查溢出（R005）和 `INT64_MIN / -1`。
-- **解析先于执行**：脚本先整体解析/校验再执行（D14），首错中止；脚本缺参不进入会话，报 S006。交互会话只允许 REPL 顶层单条命令。
+- **解析先于执行**：脚本先整体解析/校验再执行（D14），首错中止；脚本缺参不进入会话：交互命令缺参报 S006，非交互命令缺参报 S002；参数过多一律 S002。交互会话只允许 REPL 顶层单条命令。
 - **命令不是值**：内建函数和类型构造器是一等 callable；`echo line`、`x = line` 是 S008。
 - **`Incomplete` 不是错误**：仅 REPL 用于未闭合 `{}` / `()` / `[]` 或行尾 `\`；脚本 EOF 的未闭合是 P002。
 - **v1 没有用户函数**：`def` / `return` 是保留字（S007），不要实现闭包、lambda、模块或异常。

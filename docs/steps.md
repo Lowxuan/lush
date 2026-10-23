@@ -365,12 +365,14 @@ BoundaryInt @...
 - `src/lush/core/value.h/.cpp`
 - `src/lush/core/cell.h`
 - `src/lush/core/eval.h/.cpp`
+- `src/lush/core/validate.h/.cpp`
 - `src/lush/core/format.h/.cpp`
 - `src/lush/core/checked.h`
 - `src/lush/core/output.h`
 - `src/lush/core/builtins.h/.cpp`
 - `tests/unit_value.cpp`
 - `tests/unit_ref.cpp`
+- `tests/unit_eval.cpp`
 - `tests/golden_spec.cpp`
 
 **任务**
@@ -378,6 +380,7 @@ BoundaryInt @...
 - `Value`：int64、double、bool、string、list、Point、callable。
 - 值语义：读取/赋值默认深拷贝；`list` 用 `shared_ptr` 时必须自定义拷贝构造/赋值来克隆。
 - `Cell` + `Env` + `hasInboundRef`；`ref` 单层规则（spec §4.5）。
+- 普通赋值 target-first：目标路径中的后缀 `++`/`--` 延迟到写入后提交；RHS 的后缀仍立即写回；`ref`/`for` init 例外（spec §5.7/§6.1）。
 - 作用域、循环、`break`/`continue`。
 - 算术、比较、逻辑、三元、索引、成员、`++`/`--`。
 - `type` 值与 `bool`/`list`/`string` 等构造器；callable 可存储、可传递、可调用。
@@ -385,24 +388,34 @@ BoundaryInt @...
 - `checked.h` 负责 int64 检查算术（溢出、`INT64_MIN / -1`）。
 - 运行时错误 `RuntimeError`，带 `Diagnostic`。
 - `output.h` 提供输出抽象，便于后续宿主/cli 接管。
+- 最小校验（`validate`）：S001（相对 M3 `NameCatalog`）、S003、S005、S008；S002/S006 留 M4/M5。
+- M3 的 `Command` 只支持 `echo`；语句位置的内建函数调用（如 `int 1`）暂报 S001，M4 再开放。
 
 **测试**
 
 - 非命令 golden：G01–G10、G17–G19、G29–G32、G38–G43、G45–G49。
 - `ref` 专项：G04–G07、G35–G36、G50–G52。
 - 只读成员/索引、越界、除零、溢出、`INT64_MIN`。
-- `unit_value`、`unit_ref` 全绿。
+- target-first：`a[i] = i++`、`a[i++] = i`、`a[i++] = i++`、`a[i++] = i++ + i`；目标错误优先；RHS/写入失败时仍提交目标后缀；多重目标后缀；`i = i++` 保持旧值。
+- 最小校验：`int = 1` / `ECHO = 1` / `for int in ...` / `int[0] = 1` / `x = int++` → S003；`x = ref int` → R001；`x = int[0]` → R002；顶层 `break`/`continue` → S005；`x = echo` / `echo echo` → S008；`foo 1` → S001。
+- 错误位置按 §11.3（含 R006、S003、S005、S008）。
+- 格式化：指数规范化、`-0.0`、嵌套字符串转义。
+- `INT64_MIN % -1 == 0`，`INT64_MIN / -1` → R005。
+- ref：`hasInboundRef` 离开作用域后仍不清除、ref 到 callable、ref 到 list/point 写穿透。
+- `unit_value`、`unit_ref`、`unit_eval`、`golden_spec` 全绿。
 
 **完成标准**
 
 - 非命令 golden 全绿；
 - 不依赖 reference host 即可运行；
+- `unit_value`、`unit_ref`、`unit_eval`、`golden_spec` 全绿；
 - `/W4` 无警告。
 
 **边界**
 
 - 不实现命令注册表、交互会话或 CLI 脚本模式；
-- `echo` 是 core 内建命令，但完整命令系统在 M4。
+- `echo` 是 core 内建命令，但完整命令系统在 M4；
+- M3 的 `Command` 只支持 `echo`；语句位置的内建函数调用（`int 1`）留 M4。
 
 ---
 
@@ -425,7 +438,11 @@ BoundaryInt @...
 - 参数绑定转换：int → double、list → Point、`any` 接受 callable 等。
 - 元数检查、变参、可选参数、默认值。
 - 区分命令调用与函数调用；命令不是值。
+- 函数在语句位置合法（`int 1`，返回值丢弃）；参数个数错误 S002。
+- 变量中的 callable 不是命令：`t = int; t 1` 仍 S001，`t(1)` 是表达式调用。
+- `point` 参数：list 转换失败 → R006；非 list/point 类型或维度不符 → R002。
 - 校验错误 S001/S002/S006/S008（以及相关的 S003/S004/S005/S007）。
+- 脚本缺参：交互命令 S006，非交互命令 S002；参数过多一律 S002。
 - reference host 实现 `line` / `circle` / `move`，通过 `OutputSink` 写转录。
 - `echo` 已在 core 内建，不重复实现。
 
@@ -433,6 +450,9 @@ BoundaryInt @...
 
 - 命令 golden：G11–G16、G20–G21、G23–G28、G33、G37、G44。
 - 参数类型错误、元数错误、命令进入表达式。
+- 语句位置函数调用：`int 1` 合法；`int 1 2` → S002；`t = int; t 1` → S001；`t(1)` 合法。
+- 脚本缺参：`line 0,0` → S006；`move 1` → S002；`line 0,0 1,1 2,2` → S002。
+- point 参数：`line [1] ...` → R006；`line "x" ...` → R002；维度不符 → R002。
 - `unit_command` 全绿。
 
 **完成标准**
@@ -461,7 +481,7 @@ BoundaryInt @...
 - 会话状态：`NEED_INPUT / DONE / ERROR / CANCELLED`。
 - 必选/可选参数、默认值、空输入、取消。
 - 会话输入按 `barePoint | expr` 解析。
-- 脚本模式不进入会话；脚本缺参报 S006。
+- 脚本模式不进入会话；交互命令缺参报 S006，非交互命令缺参报 S002；参数过多一律 S002。
 - 复用 M2 的 `IncompleteReason`：
   - `NeedStatement`：`if` / `while` / `for` / `for-in` / `else` 缺 body；
   - `TrailingContinuation`：末尾续行；
@@ -492,7 +512,7 @@ BoundaryInt @...
 - 注释行不取消待完成输入；
 - `if (a);` / `while (a);` / `for (;;);` 空 body；
 - 取消；
-- 脚本 vs REPL 的 S006 差异；
+- 脚本 vs REPL 的 S006/S002 差异；
 - 会话中输入 `0,0`；
 - `unit_driver` 全绿。
 
@@ -500,7 +520,7 @@ BoundaryInt @...
 
 - CLI 可用；
 - G22 通过；
-- 脚本模式缺参报 S006；
+- 脚本模式交互命令缺参报 S006，非交互命令缺参报 S002；
 - REPL 未闭合输入能继续读取。
 
 ---
