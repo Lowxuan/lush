@@ -10,11 +10,11 @@
 | M1 词法 | ✅ 已完成 | UTF-8、Source、Diagnostic、Token、Lexer、`--dump-tokens` |
 | M2 语法 | ✅ 已完成 | AST、Parser、命令参数切词、`Incomplete`、`--dump-ast`；`unit_parser` 全绿 |
 | M3 求值 | ✅ 已完成 | Value、Cell/Env、Eval、Validate、格式化、内建、非命令 golden |
-| M4 命令 | ⬜ 下一步 | 命令 spec/registry、参考宿主、命令 golden |
+| M4 命令 | ⬜ 下一步（设计已定） | 命令 spec/registry、参考宿主、命令 golden；设计约定见下文 |
 | M5 会话 / REPL | ⬜ 未开始 | Session、Driver、脚本/REPL CLI |
 | M6 补全 | ⬜ 未开始 | 补全上下文与候选 API |
 
-M1、M2、M3 已完成：`lush_tests` 当前 142 个测试，CTest 目标为 `lush_tests`、`lush_version`、`lush_dump_tokens`、`lush_dump_ast`。下一步是 M4（命令注册与参考宿主）。
+M1、M2、M3 已完成：`lush_tests` 当前 142 个测试，CTest 目标为 `lush_tests`、`lush_version`、`lush_dump_tokens`、`lush_dump_ast`。下一步是 M4（命令注册与参考宿主）；M4 的语义与 API 约定已定，代码尚未开始。
 
 ---
 
@@ -427,40 +427,90 @@ BoundaryInt @...
 
 **文件**
 
+- `src/lush/core/builtins.h/.cpp`：`CallableInfo`、`NameCatalog`、builtin arity 表、语句位置 builtin 调用
+- `src/lush/core/validate.h/.cpp`：`ValidationOptions`
 - `src/lush/command/spec.h`
 - `src/lush/command/registry.h/.cpp`
 - `src/lush/command/host.h`
 - `src/reference/reference_host.h/.cpp`
 - `tests/unit_command.cpp`
+- `tests/unit_eval.cpp`：更新 M3 的语句位置 builtin 断言
+- `src/CMakeLists.txt`、`tests/CMakeLists.txt`
+
+**设计约定（已拍板）**
+
+- core 的 `NameCatalog` 增加 `CallableInfo`：
+  - 字段为 `required`、`maxFixed`、`variadic`、`interactive`、`returnsValue`；
+  - 只描述 arity/交互/返回值，不描述参数类型；
+  - `isCommand` / `isReserved` 由 `callableInfo` 派生，避免注册状态漂移；
+  - `validate` 增加 `ValidationOptions { bool allowInteractiveSession = false; }`。
+- builtin 的联合类型/重载留在 `BuiltinCallable` 的 `callX` 中，不进入 `CallableInfo`：
+  - `BuiltinCatalog` 维护一张 `BuiltinId` → arity 表，`callableInfo` 与 `BuiltinCallable::call` 共用；
+  - `BuiltinCatalog::invokeCommand` 支持语句位置 builtin 函数调用（调用后丢弃返回值）；
+  - `int 1` / `int(1)` 从此合法；`int 1 2` → S002；M3 的 `unit_eval` 两个 S001 断言改为合法。
+- 变参采用解释 A：
+  - 变参命令不得有可选参数；变参参数 `optional=false` 且无 `default`；
+  - `echo` 的 `CallableInfo` 为 `required=0, maxFixed=0, variadic=true`。
+- 宿主命令/函数：
+  - `CommandSpec` 注册时校验成 `Signature`（校验后的参数表 + `required`/`maxFixed`/`variadic`/`interactive`/`returnsValue`）；
+  - 默认值在注册时预绑定；默认值只接受字面量，拒绝 callable；
+  - `Registry` 存 `shared_ptr<const RegisteredCallable>`；value 函数的 `Callable` adapter 也持有同一个 shared_ptr，保证 `t = f` 后 registry 销毁仍可调用；
+  - 注册失败是宿主编程错误，`registerCommand` 返回 `RegistrationResult`；参考宿主用断言/终止。检查项至少包括：名称/别名冲突与关键字、与 builtin/`echo` 冲突、必选在可选后、变参不在最后/多个变参、变参+可选/默认值、可选缺默认值、必选或变参带默认值、重复参数名、默认值无法绑定、`interactive` 与 `returns=value` 同时为真、非 point 参数 `dim != 0`。
+- 绑定：
+  - 语句位置 `bindStatement`：arity S002 在命令名；
+  - 表达式位置 `bindCall`：arity R002 在调用 `(`；
+  - 类型错误 R002、point 转换 R006 在违规参数；共享转换/default 逻辑，不共享错误码/Span 选择。
+- 参数求值：一次调用先从左到右求值全部参数，再统一绑定；绑定错误发生在求值之后。
+- 宿主 API：
+  - 直接复用 `core::Output`，不新增 `OutputSink`；
+  - handler 接收绑定后的 `vector<Value>` + `CommandContext` + `Output&`；
+  - `CommandResult { optional<Value> value; optional<HostError> error; }`；`HostError { message; optional<Span> span; }`；
+  - 宿主失败统一 R010；默认 Span 为语句位置命令名、表达式位置 callee，`HostError.span` 可覆盖；error 优先于 value，void/value 返回值不匹配是宿主编程错误；
+  - 宿主 value 函数做最小实现：`returns=value` 的 `CommandSpec` + handler，表达式位置和语句位置都可用。
+- 构建：
+  - 新增 `lush_command`、`lush_reference` 两个 static library；
+  - `lush_tests` 链接两者；CLI 仍只链接 core，M5 再接 driver。
 
 **任务**
 
-- `ParamType / ParamSpec / CommandSpec / Signature`。
-- 大小写不敏感注册表、别名、内建注册。
+- core：在 `NameCatalog` 增加 `CallableInfo` 与 `callableInfo`；`isCommand`/`isReserved` 由 `callableInfo` 派生；`validate` 增加 `allowInteractiveSession`。
+- core：`BuiltinCatalog` 增加 builtin arity 表与 `callableInfo`，支持语句位置 builtin 函数调用（`int 1` 合法，返回值丢弃）；`int 1 2` → S002。
+- `ParamType / ParamSpec / CommandSpec / Signature`；注册约束与 `RegistrationResult`。
+- 大小写不敏感注册表、别名、与 builtin/`echo` 的冲突检查。
 - 参数绑定转换：int → double、list → Point、`any` 接受 callable 等。
-- 元数检查、变参、可选参数、默认值。
-- 区分命令调用与函数调用；命令不是值。
+- 元数检查、变参（解释 A）、可选参数、默认值（注册时预绑定，拒绝 callable）。
+- 区分命令调用与函数调用；命令不是值；宿主 value 函数最小实现。
 - 函数在语句位置合法（`int 1`，返回值丢弃）；参数个数错误 S002。
 - 变量中的 callable 不是命令：`t = int; t 1` 仍 S001，`t(1)` 是表达式调用。
 - `point` 参数：list 转换失败 → R006；非 list/point 类型或维度不符 → R002。
 - 校验错误 S001/S002/S006/S008（以及相关的 S003/S004/S005/S007）。
 - 脚本缺参：交互命令 S006，非交互命令 S002；参数过多一律 S002。
-- reference host 实现 `line` / `circle` / `move`，通过 `OutputSink` 写转录。
+- `Registry` 存 `shared_ptr<const RegisteredCallable>`；value 函数 adapter 共享所有权。
+- `bindStatement` / `bindCall` 两套错误码与 Span；参数先全部求值再绑定。
+- handler 使用 `core::Output`；`CommandResult` / `HostError`；宿主失败 R010。
+- reference host 实现 `line` / `circle` / `move`，通过 `core::Output` 写转录。
 - `echo` 已在 core 内建，不重复实现。
 
 **测试**
 
-- 命令 golden：G11–G16、G20–G21、G23–G28、G33、G37、G44。
+- 命令 golden：G11–G16、G20–G21、G23–G28、G33、G37、G44；已有用例保留，新增命令用例放 `unit_command`。
 - 参数类型错误、元数错误、命令进入表达式。
-- 语句位置函数调用：`int 1` 合法；`int 1 2` → S002；`t = int; t 1` → S001；`t(1)` 合法。
+- 语句位置函数调用：`int 1` / `int(1)` 合法；`int 1 2` → S002；`t = int; t 1` → S001；`t(1)` 合法。
+- builtin 语句位置 arity 边界：`int 1 2`、`point 1 2 3 4`、`len`、`echo` 的 0 个/多个参数；表达式位置对照 R002 在 `(`。
 - 脚本缺参：`line 0,0` → S006；`move 1` → S002；`line 0,0 1,1 2,2` → S002。
 - point 参数：`line [1] ...` → R006；`line "x" ...` → R002；维度不符 → R002。
+- 宿主 value 函数：表达式调用、语句调用（返回值丢弃）、表达式/语句的 arity 差异、`t = f` 后 registry 销毁仍可调用。
+- 宿主失败：`HostError` → R010；默认 Span 命令名/callee；已产生输出保留。
+- 注册失败：名称/别名冲突、与 builtin/`echo` 冲突、变参+可选、变参带默认值、可选缺默认值、callable 默认值、默认值类型不符、`interactive` + `returns=value`。
+- `tests/eval_test_utils.h` 增加接受 `NameCatalog&`/Registry 的 helper；M3 的 `int 1` / `int(1)` S001 断言改为合法。
 - `unit_command` 全绿。
 
 **完成标准**
 
 - 命令 golden 全绿；
 - `line` / `circle` 的提示文本和转录格式正确；
+- `int 1` / `int(1)` 合法，`int 1 2` → S002；
+- R010 已定义并有测试；
 - 不实现会话状态机（M5）。
 
 ---
@@ -503,6 +553,7 @@ BoundaryInt @...
   - `lush -e "..."` 执行一段源码；
   - Windows console 保持 UTF-8。
 - 错误策略：解析/校验首错中止；会话错误停留当前参数；取消结束会话。
+- 待定边界：按 §7.4，`required = 0` 的 interactive 命令不会进入会话，因此只有可选参数的 interactive 命令永远不会提示可选参数；M5 再确认是否调整。
 
 **测试**
 

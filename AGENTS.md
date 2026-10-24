@@ -4,13 +4,13 @@
 
 ## 先读什么
 
-- **语义唯一来源：`docs/spec.md`（v0.3.4）。** 代码与 spec 冲突时以 spec 为准；要改语义，先改 spec 和 golden，再改代码。
+- **语义唯一来源：`docs/spec.md`（v0.3.5）。** 代码与 spec 冲突时以 spec 为准；要改语义，先改 spec 和 golden，再改代码。
 - `docs/steps.md`：M1–M6 开发里程碑、文件、任务、测试与完成标准。
 - `README.md`：构建入口。
 - `start.md` / `teaching.md`：历史需求与选型讨论，**不是规范**。`teaching.md` 里推荐的 peglib / ANTLR / Lua 等均未采用；本项目使用手写递归下降 + 优先级爬升，零第三方依赖。
 - **`docs/spec.md` 是 UTF-8。** 直接按 UTF-8 读取；不要按 GBK/cp936 解码。
 
-spec 很长（约 2220 行），按需读：§0.1 决策表、§2–§8 语义、§11.1 错误码、§12 补全、§15 golden G01–G52。
+spec 很长（约 2230 行），按需读：§0.1 决策表、§2–§8 语义、§11.1 错误码、§12 补全、§15 golden G01–G52。
 
 ## 当前状态（不要假设功能已存在）
 
@@ -18,8 +18,8 @@ spec 很长（约 2220 行），按需读：§0.1 决策表、§2–§8 语义�
   - `lush_core` 已实现 `utf8`、`source`、`diagnostic`、`token`、`lexer`、`version`、`ast`、`parser`、`value`、`cell`、`validate`、`eval`、`format`、`builtins`、`checked`、`output`；
   - CLI 支持 `--version`、`--help`、`--dump-tokens <file>`、`--dump-tokens -e "<source>"`、`--dump-ast <file>`、`--dump-ast -e "<source>"`；
   - 仍无 REPL、无脚本执行模式；`-e` 只用于 `--dump-tokens` / `--dump-ast`；普通文件路径仍报 `unknown option` 并退出 2。
-- 命令 / 会话 / 补全**尚未实现**；M3 的 `Command` 只支持 `echo`，`lush file.lush` / `lush -e` 留 M5。
-- M2 的 AST/Parser 规则和 M3 的求值规则已在 `docs/spec.md` 0.3.4 和 `docs/steps.md` 实现并测试。下一步是 **M4（命令注册与参考宿主）**；不要提前写 M5 的会话/REPL。
+- M4 的语义与 API 约定**已拍板，但代码尚未开始**；命令 / 会话 / 补全仍未实现。M3 的 `Command` 目前只支持 `echo`，`lush file.lush` / `lush -e` 留 M5。
+- M2 的 AST/Parser 规则和 M3 的求值规则已在 `docs/spec.md` 0.3.5 和 `docs/steps.md` 实现并测试。下一步是 **M4（命令注册与参考宿主）**，设计约定见下；不要提前写 M5 的会话/REPL。
 - spec §15 的 G01–G52 中，M3 的非命令 golden 已在 `tests/golden_spec.cpp` 落地；命令/会话 golden 仍待 M4/M5，不要声称全部通过。
 - 当前 `lush_tests` 有 142 个测试；CTest 有四个目标：`lush_tests`、`lush_version`、`lush_dump_tokens`、`lush_dump_ast`。
 
@@ -34,7 +34,7 @@ M2 语法实现约定（已完成）：
 
 - `LexResult` 额外携带 `endsWithContinuation`、`lastContinuationOffset`、`endOffset`。
 - `ast.h/.cpp`：节点带 Span，表达式 Span 包含外层分组括号（`BoundaryInt` 例外，只覆盖字面量）；`BoundaryInt` 只允许在 `Unary(-, ...)` 中。
-- `parser.h/.cpp`：`parse`、`parseExpression`、`parseWord`、`splitCommandWords`，`Incomplete` 取最内层未闭合定界符；P002/P004 与词边界规则按 spec 0.3.4。
+- `parser.h/.cpp`：`parse`、`parseExpression`、`parseWord`、`splitCommandWords`，`Incomplete` 取最内层未闭合定界符；P002/P004 与词边界规则按 spec（0.3.3/0.3.4 定稿）。
 - `--dump-ast` 使用脚本模式，解析失败只输出诊断并退出 1；`--dump-ast` 与 `--dump-tokens` 互斥。
 
 M3 求值实现约定（已完成）：
@@ -45,6 +45,18 @@ M3 求值实现约定（已完成）：
 - 普通赋值 target-first；目标路径里的后缀 `++`/`--` 延迟到写入后提交，RHS 的后缀立即写回；`ref` 与 `for` init 例外。
 - `validate` 实现 S001（M3 catalog 范围）、S003、S005、S008；`eval` 实现运行时 R001–R009、R012 和 `echo`。
 - M3 测试走库内 API：`tests/eval_test_utils.h` 组合 Lexer/parse/validate/eval，`StringOutput` 捕获输出；golden 位置按 spec §11.3 断言。
+
+M4 命令实现约定（已拍板，代码未开始）：
+
+- core 的 `NameCatalog` 增加 `CallableInfo { required, maxFixed, variadic, interactive, returnsValue }`；`isCommand`/`isReserved` 由 `callableInfo` 派生；`validate` 增加 `ValidationOptions { bool allowInteractiveSession = false; }`。
+- builtin 的联合类型/重载留在 `BuiltinCallable` 的 `callX`，`CallableInfo` 只描述 arity；`BuiltinCatalog` 用一张 `BuiltinId` → arity 表同时驱动 `callableInfo` 和 `BuiltinCallable::call`，并支持语句位置 builtin 调用（`int 1` 合法，返回值丢弃）；`int 1 2` → S002。
+- 变参解释 A：变参命令不得有可选参数；变参参数 `optional=false` 且无 `default`。
+- `CommandSpec` 注册时校验成 `Signature`；默认值注册时预绑定，只接受字面量，拒绝 callable。注册失败是宿主编程错误，返回 `RegistrationResult`，不产生 L/P/S/R。
+- `Registry` 存 `shared_ptr<const RegisteredCallable>`；value 函数的 `Callable` adapter 共享所有权，`t = f` 后 registry 销毁仍可调用。
+- `bindStatement`（arity S002 在命令名）与 `bindCall`（arity R002 在 `(`）分开；类型 R002、point R006 在违规参数；一次调用先从左到右全部求值，再统一绑定。
+- 宿主复用 `core::Output`；handler 收绑定后的 `vector<Value>` + `CommandContext` + `Output&`；`CommandResult { optional<Value> value; optional<HostError> error; }`，`HostError { message; optional<Span> span; }`；宿主失败统一 R010，默认 Span 命令名/callee。
+- 新增 `lush_command` / `lush_reference` 两个 static library；`lush_tests` 链接两者；CLI 仍只链接 core。
+- M4 会更新 M3 的 `int 1` / `int(1)` S001 断言；命令测试放 `tests/unit_command.cpp`，测试 helper 需能接受 Registry。
 
 ## 构建 / 测试
 
@@ -78,10 +90,10 @@ ctest --preset vs2022-debug --output-on-failure
 
 ```text
 src/lush/core/        只依赖标准库（utf8/source/diagnostic/token/lexer/version）
-src/lush/command/     命令注册、参数绑定、会话（未实现）
+src/lush/command/     命令注册、参数绑定、宿主（M4 设计已定，未实现；会话属 M5）
 src/lush/driver/      脚本 / REPL 执行状态机（未实现）
 src/lush/completion/  补全（未实现）
-src/reference/        示例宿主（未实现）
+src/reference/        参考宿主 line/circle/move（M4 设计已定，未实现）
 src/cli/              CLI 前端
 tests/                单一 lush_tests 可执行文件
 ```
