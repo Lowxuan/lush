@@ -24,6 +24,24 @@ enum class BuiltinId {
     Len,
 };
 
+struct BuiltinArity {
+    std::size_t required = 1;
+    std::size_t maxFixed = 1;
+    bool variadic = false;
+};
+
+BuiltinArity builtinArity(BuiltinId id) {
+    if (id == BuiltinId::Point) {
+        return BuiltinArity{1, 3, false};
+    }
+    return BuiltinArity{1, 1, false};
+}
+
+bool arityOk(const BuiltinArity& arity, std::size_t argc) {
+    return argc >= arity.required &&
+           (arity.variadic || argc <= arity.maxFixed);
+}
+
 CallablePtr callableForType(ValueType type);
 
 class BuiltinCallable final : public Callable {
@@ -66,6 +84,35 @@ std::string asciiLower(std::string_view text) {
 
 bool asciiEqualsIgnoreCase(std::string_view left, std::string_view right) {
     return asciiLower(left) == asciiLower(right);
+}
+
+std::optional<BuiltinId> findBuiltinId(std::string_view name) {
+    const std::string lower = asciiLower(name);
+    if (lower == "int") {
+        return BuiltinId::Int;
+    }
+    if (lower == "double") {
+        return BuiltinId::Double;
+    }
+    if (lower == "bool") {
+        return BuiltinId::Bool;
+    }
+    if (lower == "string" || lower == "str") {
+        return BuiltinId::String;
+    }
+    if (lower == "list") {
+        return BuiltinId::List;
+    }
+    if (lower == "point") {
+        return BuiltinId::Point;
+    }
+    if (lower == "type") {
+        return BuiltinId::Type;
+    }
+    if (lower == "len") {
+        return BuiltinId::Len;
+    }
+    return std::nullopt;
 }
 
 std::string actualTypeName(const Value& value) {
@@ -173,11 +220,21 @@ CallablePtr lenCallable() {
     return callable;
 }
 
-CallResult callInt(const std::vector<Value>& args, const CallContext& context) {
-    if (args.size() != 1) {
-        return arityError(context);
+CallablePtr callableForBuiltin(BuiltinId id) {
+    switch (id) {
+    case BuiltinId::Int: return intCallable();
+    case BuiltinId::Double: return doubleCallable();
+    case BuiltinId::Bool: return boolCallable();
+    case BuiltinId::String: return stringCallable();
+    case BuiltinId::List: return listCallable();
+    case BuiltinId::Point: return pointCallable();
+    case BuiltinId::Type: return typeCallable();
+    case BuiltinId::Len: return lenCallable();
     }
+    return intCallable();
+}
 
+CallResult callInt(const std::vector<Value>& args, const CallContext& context) {
     const Value& value = args[0];
     if (value.isInt()) {
         return CallResult::ok(value);
@@ -199,10 +256,6 @@ CallResult callInt(const std::vector<Value>& args, const CallContext& context) {
 
 CallResult callDouble(const std::vector<Value>& args,
                       const CallContext& context) {
-    if (args.size() != 1) {
-        return arityError(context);
-    }
-
     const Value& value = args[0];
     if (value.isDouble()) {
         return CallResult::ok(value);
@@ -216,10 +269,6 @@ CallResult callDouble(const std::vector<Value>& args,
 
 CallResult callBool(const std::vector<Value>& args,
                     const CallContext& context) {
-    if (args.size() != 1) {
-        return arityError(context);
-    }
-
     const Value& value = args[0];
     switch (value.type()) {
     case ValueType::Bool:
@@ -241,18 +290,12 @@ CallResult callBool(const std::vector<Value>& args,
 
 CallResult callString(const std::vector<Value>& args,
                       const CallContext& context) {
-    if (args.size() != 1) {
-        return arityError(context);
-    }
+    (void)context;
     return CallResult::ok(Value::makeString(formatValue(args[0])));
 }
 
 CallResult callList(const std::vector<Value>& args,
                     const CallContext& context) {
-    if (args.size() != 1) {
-        return arityError(context);
-    }
-
     const Value& value = args[0];
     if (value.isList()) {
         return CallResult::ok(Value::makeList(value.asList()));
@@ -288,10 +331,6 @@ CallResult callList(const std::vector<Value>& args,
 
 CallResult callPoint(const std::vector<Value>& args,
                      const CallContext& context) {
-    if (args.empty() || args.size() > 3) {
-        return arityError(context);
-    }
-
     if (args.size() == 1) {
         const Value& value = args[0];
         if (value.isPoint()) {
@@ -324,17 +363,11 @@ CallResult callPoint(const std::vector<Value>& args,
 
 CallResult callType(const std::vector<Value>& args,
                     const CallContext& context) {
-    if (args.size() != 1) {
-        return arityError(context);
-    }
+    (void)context;
     return CallResult::ok(Value::makeCallable(callableForType(args[0].type())));
 }
 
 CallResult callLen(const std::vector<Value>& args, const CallContext& context) {
-    if (args.size() != 1) {
-        return arityError(context);
-    }
-
     const Value& value = args[0];
     switch (value.type()) {
     case ValueType::List:
@@ -356,6 +389,10 @@ CallResult callLen(const std::vector<Value>& args, const CallContext& context) {
 
 CallResult BuiltinCallable::call(const std::vector<Value>& args,
                                  const CallContext& context) const {
+    if (!arityOk(builtinArity(id_), args.size())) {
+        return arityError(context);
+    }
+
     switch (id_) {
     case BuiltinId::Int: return callInt(args, context);
     case BuiltinId::Double: return callDouble(args, context);
@@ -385,60 +422,80 @@ CallablePtr callableForType(ValueType type) {
 
 } // namespace
 
+bool NameCatalog::isCommand(std::string_view name) const {
+    const std::optional<CallableInfo> info = callableInfo(name);
+    return info.has_value() && !info->returnsValue;
+}
+
+bool NameCatalog::isReserved(std::string_view name) const {
+    return callableInfo(name).has_value();
+}
+
+std::optional<CallableInfo> BuiltinCatalog::callableInfo(
+    std::string_view name) const {
+    if (asciiEqualsIgnoreCase(name, "echo")) {
+        return CallableInfo{0, 0, true, false, false};
+    }
+
+    if (const std::optional<BuiltinId> id = findBuiltinId(name)) {
+        const BuiltinArity arity = builtinArity(*id);
+        return CallableInfo{arity.required, arity.maxFixed, arity.variadic,
+                            false, true};
+    }
+    return std::nullopt;
+}
+
 CallablePtr BuiltinCatalog::findCallable(std::string_view name) const {
-    const std::string lower = asciiLower(name);
-    if (lower == "int") {
-        return intCallable();
+    const std::optional<BuiltinId> id = findBuiltinId(name);
+    if (!id) {
+        return nullptr;
     }
-    if (lower == "double") {
-        return doubleCallable();
-    }
-    if (lower == "bool") {
-        return boolCallable();
-    }
-    if (lower == "string" || lower == "str") {
-        return stringCallable();
-    }
-    if (lower == "list") {
-        return listCallable();
-    }
-    if (lower == "point") {
-        return pointCallable();
-    }
-    if (lower == "type") {
-        return typeCallable();
-    }
-    if (lower == "len") {
-        return lenCallable();
-    }
-    return nullptr;
-}
-
-bool BuiltinCatalog::isCommand(std::string_view name) const {
-    return asciiEqualsIgnoreCase(name, "echo");
-}
-
-bool BuiltinCatalog::isReserved(std::string_view name) const {
-    return findCallable(name) != nullptr || isCommand(name);
+    return callableForBuiltin(*id);
 }
 
 std::optional<Diagnostic> BuiltinCatalog::invokeCommand(
     std::string_view name, const std::vector<Value>& args, Output& output,
     const CommandContext& context) const {
-    if (!asciiEqualsIgnoreCase(name, "echo")) {
+    const std::optional<CallableInfo> info = callableInfo(name);
+    if (!info) {
         return Diagnostic{ErrorCode::S001, context.nameSpan,
                           "未知命令 " + std::string(name), {}};
     }
 
-    std::string text;
-    for (std::size_t index = 0; index < args.size(); ++index) {
-        if (index != 0) {
-            text.push_back(' ');
-        }
-        text += formatValue(args[index]);
+    if (args.size() < info->required ||
+        (!info->variadic && args.size() > info->maxFixed)) {
+        return Diagnostic{ErrorCode::S002, context.nameSpan,
+                          "参数个数不符", {}};
     }
-    text.push_back('\n');
-    output.write(text);
+
+    if (asciiEqualsIgnoreCase(name, "echo")) {
+        std::string text;
+        for (std::size_t index = 0; index < args.size(); ++index) {
+            if (index != 0) {
+                text.push_back(' ');
+            }
+            text += formatValue(args[index]);
+        }
+        text.push_back('\n');
+        output.write(text);
+        return std::nullopt;
+    }
+
+    CallablePtr callable = findCallable(name);
+    if (!callable) {
+        return Diagnostic{ErrorCode::S001, context.nameSpan,
+                          "未知命令 " + std::string(name), {}};
+    }
+
+    CallContext callContext;
+    callContext.calleeSpan = context.nameSpan;
+    callContext.lparenSpan = context.nameSpan;
+    callContext.argSpans = context.argSpans;
+
+    CallResult result = callable->call(args, callContext);
+    if (result.diagnostic) {
+        return result.diagnostic;
+    }
     return std::nullopt;
 }
 

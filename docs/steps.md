@@ -10,11 +10,11 @@
 | M1 词法 | ✅ 已完成 | UTF-8、Source、Diagnostic、Token、Lexer、`--dump-tokens` |
 | M2 语法 | ✅ 已完成 | AST、Parser、命令参数切词、`Incomplete`、`--dump-ast`；`unit_parser` 全绿 |
 | M3 求值 | ✅ 已完成 | Value、Cell/Env、Eval、Validate、格式化、内建、非命令 golden |
-| M4 命令 | ⬜ 下一步（设计已定） | 命令 spec/registry、参考宿主、命令 golden；设计约定见下文 |
-| M5 会话 / REPL | ⬜ 未开始 | Session、Driver、脚本/REPL CLI |
+| M4 命令 | ✅ 已完成 | 命令 spec/registry、参数绑定、参考宿主、命令 golden |
+| M5 会话 / REPL | ⬜ 下一步 | Session、Driver、脚本/REPL CLI |
 | M6 补全 | ⬜ 未开始 | 补全上下文与候选 API |
 
-M1、M2、M3 已完成：`lush_tests` 当前 142 个测试，CTest 目标为 `lush_tests`、`lush_version`、`lush_dump_tokens`、`lush_dump_ast`。下一步是 M4（命令注册与参考宿主）；M4 的语义与 API 约定已定，代码尚未开始。
+M1–M4 已完成：`lush_tests` 当前 169 个测试，CTest 目标为 `lush_tests`、`lush_version`、`lush_dump_tokens`、`lush_dump_ast`。下一步是 M5（会话与 REPL）；命令系统已经可用，但 CLI 仍未接入脚本/REPL 执行。
 
 ---
 
@@ -421,9 +421,16 @@ BoundaryInt @...
 
 ---
 
-## M4 — 命令注册与参考宿主
+## M4 — 命令注册与参考宿主（已完成）
 
 **目标**：实现声明式命令/函数注册、参数绑定和参考宿主，让命令 golden 跑通。
+
+**实现结果**
+
+- core：`CallableInfo` / `callableInfo`、`ValidationOptions`、builtin arity 表、语句位置 builtin 调用已落地；`int 1` / `int(1)` 合法，`int 1 2` → S002。
+- command：`spec.h` / `host.h` / `registry` 已落地；`Signature`、`RegistrationResult`、`shared_ptr<const RegisteredCallable>`、`bindStatement` / `bindCall`、R010。
+- reference：`line` / `circle` / `move` 已落地，通过 `core::Output` 写转录。
+- 测试：`unit_command` 已加入；`lush_tests` 共 169 个测试，Debug / Release / Werror / Ninja 全绿。
 
 **文件**
 
@@ -452,7 +459,7 @@ BoundaryInt @...
   - 变参命令不得有可选参数；变参参数 `optional=false` 且无 `default`；
   - `echo` 的 `CallableInfo` 为 `required=0, maxFixed=0, variadic=true`。
 - 宿主命令/函数：
-  - `CommandSpec` 注册时校验成 `Signature`（校验后的参数表 + `required`/`maxFixed`/`variadic`/`interactive`/`returnsValue`）；
+  - `CommandSpec` 注册时校验成 `Signature`（校验后的参数表 + `help`/`aliases` + `required`/`maxFixed`/`variadic`/`interactive`/`returnsValue`）；
   - 默认值在注册时预绑定；默认值只接受字面量，拒绝 callable；
   - `Registry` 存 `shared_ptr<const RegisteredCallable>`；value 函数的 `Callable` adapter 也持有同一个 shared_ptr，保证 `t = f` 后 registry 销毁仍可调用；
   - 注册失败是宿主编程错误，`registerCommand` 返回 `RegistrationResult`；参考宿主用断言/终止。检查项至少包括：名称/别名冲突与关键字、与 builtin/`echo` 冲突、必选在可选后、变参不在最后/多个变参、变参+可选/默认值、可选缺默认值、必选或变参带默认值、重复参数名、默认值无法绑定、`interactive` 与 `returns=value` 同时为真、非 point 参数 `dim != 0`。
@@ -463,10 +470,11 @@ BoundaryInt @...
 - 参数求值：一次调用先从左到右求值全部参数，再统一绑定；绑定错误发生在求值之后。
 - 宿主 API：
   - 直接复用 `core::Output`，不新增 `OutputSink`；
-  - handler 接收绑定后的 `vector<Value>` + `CommandContext` + `Output&`；
+  - void 命令用 `CommandHandler`：接收绑定后的 `vector<Value>` + `CommandContext` + `Output&`；
+  - value 函数用纯 `FunctionHandler`：接收绑定后的 `vector<Value>` + `CommandContext`，不接收 `Output`；
   - `CommandResult { optional<Value> value; optional<HostError> error; }`；`HostError { message; optional<Span> span; }`；
   - 宿主失败统一 R010；默认 Span 为语句位置命令名、表达式位置 callee，`HostError.span` 可覆盖；error 优先于 value，void/value 返回值不匹配是宿主编程错误；
-  - 宿主 value 函数做最小实现：`returns=value` 的 `CommandSpec` + handler，表达式位置和语句位置都可用。
+  - 宿主 value 函数做最小实现：`returns=value` 的 `CommandSpec` + `FunctionHandler`，表达式位置和语句位置都可用。
 - 构建：
   - 新增 `lush_command`、`lush_reference` 两个 static library；
   - `lush_tests` 链接两者；CLI 仍只链接 core，M5 再接 driver。
@@ -487,7 +495,7 @@ BoundaryInt @...
 - 脚本缺参：交互命令 S006，非交互命令 S002；参数过多一律 S002。
 - `Registry` 存 `shared_ptr<const RegisteredCallable>`；value 函数 adapter 共享所有权。
 - `bindStatement` / `bindCall` 两套错误码与 Span；参数先全部求值再绑定。
-- handler 使用 `core::Output`；`CommandResult` / `HostError`；宿主失败 R010。
+- void 命令用 `CommandHandler`（含 `core::Output`），value 函数用纯 `FunctionHandler`；`CommandResult` / `HostError`；宿主失败 R010。
 - reference host 实现 `line` / `circle` / `move`，通过 `core::Output` 写转录。
 - `echo` 已在 core 内建，不重复实现。
 

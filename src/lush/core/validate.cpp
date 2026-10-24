@@ -2,6 +2,7 @@
 
 #include "lush/core/builtins.h"
 
+#include <cstddef>
 #include <string>
 #include <string_view>
 
@@ -10,7 +11,8 @@ namespace {
 
 class Validator {
 public:
-    explicit Validator(const NameCatalog& names) : names_(names) {}
+    Validator(const NameCatalog& names, ValidationOptions options)
+        : names_(names), options_(options) {}
 
     ValidationResult run(const Program& program) {
         validateNode(program);
@@ -254,11 +256,33 @@ private:
         }
         case NodeKind::Command: {
             const auto& command = static_cast<const Command&>(statement);
-            if (!names_.isCommand(command.name.text)) {
+            const std::optional<CallableInfo> info =
+                names_.callableInfo(command.name.text);
+            if (!info) {
                 fail(ErrorCode::S001, command.name.span,
                      "未知命令 " + command.name.text);
                 return;
             }
+
+            const std::size_t argc = command.args.size();
+            if (argc < info->required) {
+                if (info->interactive) {
+                    if (!options_.allowInteractiveSession) {
+                        fail(ErrorCode::S006, command.name.span,
+                             "交互命令必须在 REPL 中作为顶层单条语句运行，"
+                             "或提供全部参数");
+                        return;
+                    }
+                } else {
+                    fail(ErrorCode::S002, command.name.span,
+                         "参数个数不符");
+                    return;
+                }
+            } else if (!info->variadic && argc > info->maxFixed) {
+                fail(ErrorCode::S002, command.name.span, "参数个数不符");
+                return;
+            }
+
             for (const ExprPtr& argument : command.args) {
                 validateExpr(*argument);
             }
@@ -272,14 +296,16 @@ private:
     }
 
     const NameCatalog& names_;
+    ValidationOptions options_;
     std::optional<Diagnostic> error_;
     int loopDepth_ = 0;
 };
 
 } // namespace
 
-ValidationResult validate(const Program& program, const NameCatalog& names) {
-    Validator validator(names);
+ValidationResult validate(const Program& program, const NameCatalog& names,
+                          ValidationOptions options) {
+    Validator validator(names, options);
     return validator.run(program);
 }
 

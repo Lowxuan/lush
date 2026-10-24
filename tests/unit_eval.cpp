@@ -14,6 +14,7 @@ using lush::core::ErrorCode;
 using lush::core::Value;
 using lush::test::expectError;
 using lush::test::expectErrorCode;
+using lush::test::expectNoError;
 using lush::test::expectOutput;
 using lush::test::findCell;
 using lush::test::hasVariable;
@@ -525,12 +526,14 @@ LUSH_TEST(eval_validation_errors) {
     {
         Env env;
         const auto result = runScript(env, "int 1\n");
-        expectError(result, ErrorCode::S001, 1, 1);
+        expectNoError(result);
+        LUSH_CHECK_EQ(result.output, std::string());
     }
     {
         Env env;
         const auto result = runScript(env, "int(1)\n");
-        expectError(result, ErrorCode::S001, 1, 1);
+        expectNoError(result);
+        LUSH_CHECK_EQ(result.output, std::string());
     }
     {
         Env env;

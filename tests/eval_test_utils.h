@@ -29,11 +29,13 @@ using lush::core::EvalContext;
 using lush::core::EvalResult;
 using lush::core::LexResult;
 using lush::core::Lexer;
+using lush::core::NameCatalog;
 using lush::core::Output;
 using lush::core::ParseOptions;
 using lush::core::ParseResult;
 using lush::core::ParseStatus;
 using lush::core::Source;
+using lush::core::ValidationOptions;
 using lush::core::ValidationResult;
 using lush::core::Value;
 using lush::core::evalProgram;
@@ -60,7 +62,9 @@ struct ScriptResult {
     std::optional<Diagnostic> diagnostic;
 };
 
-inline ScriptResult runScript(Env& env, std::string text) {
+inline ScriptResult runScriptWithCatalog(
+    Env& env, std::string text, const NameCatalog& catalog,
+    ValidationOptions options = {}) {
     Source source(std::move(text));
     Lexer lexer(source);
     LexResult lex = lexer.tokenize();
@@ -73,8 +77,8 @@ inline ScriptResult runScript(Env& env, std::string text) {
         return ScriptResult{std::move(source), {}, std::move(parsed.diagnostic)};
     }
 
-    BuiltinCatalog catalog;
-    ValidationResult validation = validate(*parsed.program, catalog);
+    ValidationResult validation =
+        validate(*parsed.program, catalog, options);
     if (validation.diagnostic) {
         return ScriptResult{std::move(source), {},
                             std::move(validation.diagnostic)};
@@ -85,6 +89,11 @@ inline ScriptResult runScript(Env& env, std::string text) {
     EvalResult evaluated = evalProgram(*parsed.program, context);
     return ScriptResult{std::move(source), output.text(),
                         std::move(evaluated.diagnostic)};
+}
+
+inline ScriptResult runScript(Env& env, std::string text) {
+    BuiltinCatalog catalog;
+    return runScriptWithCatalog(env, std::move(text), catalog);
 }
 
 inline void expectOutput(const ScriptResult& result,
