@@ -12,9 +12,9 @@
 | M3 求值 | ✅ 已完成 | Value、Cell/Env、Eval、Validate、格式化、内建、非命令 golden |
 | M4 命令 | ✅ 已完成 | 命令 spec/registry、参数绑定、参考宿主、命令 golden |
 | M5 会话 / REPL | ✅ 已完成 | Session、Driver、SourceId/SourceTable、脚本/REPL CLI |
-| M6 补全 | ⬜ 下一步 | 补全上下文与候选 API |
+| M6 补全 | ⬜ 设计已定，代码未开始 | 补全 API、上下文、类型过滤、`returnType`、参考宿主 `read` |
 
-M1–M5 已完成：`lush_tests` 当前 195 个测试，CTest 目标为 `lush_tests`、`lush_version`、`lush_dump_tokens`、`lush_dump_ast`、`lush_eval`。下一步是 M6（补全）。
+M1–M5 已完成；M6 设计已在 `docs/spec.md` 0.3.7 和本文件定稿。`lush_tests` 当前 195 个测试，CTest 目标为 `lush_tests`、`lush_version`、`lush_dump_tokens`、`lush_dump_ast`、`lush_eval`。下一步是实现 M6；CLI Tab 暂不实现。
 
 ---
 
@@ -616,35 +616,64 @@ BoundaryInt @...
 
 ---
 
-## M6 — 补全
+## M6 — 补全（设计已定，代码未开始）
 
-**目标**：提供与命令声明一致的补全核心 API，复用同一套词法/切词规则。
+**目标**：提供与命令声明一致的补全核心 API，复用同一套词法/切词规则；同时完成 `CommandSpec` / `Signature` 的返回类型元数据和参考宿主 `read` 的设计落地。
+
+**设计结论**
+
+- 补全核心是纯计算 API：完整缓冲区 + byte cursor + `Env` + `Registry` + 可选 `NeedInput`；不执行表达式、不调用宿主、不写输出、不产生诊断。
+- cursor 紧接 Identifier 时替换整个当前 token；字符串、注释、数字字面量和词法错误位置返回空候选。
+- 上下文覆盖：语句开头、表达式、命令参数、`for i in`、`[`/`(`、表达式调用 `f(`/`t(`、`.` 成员和会话参数。
+- 只有表达式位置的紧贴 `IDENT(` 是 callable 调用；`line(` 仍是命令参数，不是调用。
+- 命令/函数/类型名和关键字大小写不敏感；变量和成员大小写敏感；别名作为独立候选。
+- 参数类型按 §7.2 过滤；类型不匹配变量仍显示并降权。
+- 核心插入纯文本；Point 参数额外提供显式 `(`；不自动追加空格或 `(`。
+- `CommandSpec` / `Signature` 增加可选 `returnType`（`ValueType + dim`），缺省为 unknown；只作补全元数据，运行时校验不做。
+- 参考宿主增加 `read(prompt: string = "") -> string`；通过注入的 `std::istream` + `core::Output` 工作；EOF/读取失败/无效 UTF-8 → R010。
+- 不引入 HostInputService；`read` 直接使用宿主输入流，不接入 Driver 的 pending/session/SourceId/Ctrl+C 状态机。
+- CLI Tab 暂缓，M6 完成不依赖 Tab。
 
 **文件**
 
 - `src/lush/completion/completion.h/.cpp`
+- `src/lush/command/spec.h`、`host.h`、`registry.h/.cpp`（`returnType` 与枚举支持）
+- `src/reference/reference_host.h/.cpp`（`read` 与 I/O 注入）
+- `src/cli/main.cpp`（构造 `ReferenceHost` 时注入 `std::cin` + `ConsoleSink`）
 - `tests/unit_completion.cpp`
+- `tests/unit_reference.cpp` 或 `tests/unit_command.cpp`（`read` 测试）
+- `src/CMakeLists.txt`、`tests/CMakeLists.txt`
 
 **任务**
 
-- 上下文判定（spec §12.1）。
-- 候选来源：关键字、可见变量、命令、函数/类型构造器。
-- 命令参数候选按 `ParamSpec` 的类型/维度过滤。
-- 支持上下文：`for i in`、`[`、`(`、`f(`、`.`、会话。
-- 复用 lexer/切词规则，禁止另写扫描器。
-- CLI 的 Tab 补全暂缓；先完成核心 API 与测试。
+- 定义 `CompletionRequest` / `CompletionResult` / `CompletionItem` 和上下文枚举。
+- 用 `Lexer`、token 栈、`splitCommandWords` 和浅层表达式解析实现上下文判定；禁止另写字符扫描器。
+- 增加 `Registry` 的可调用体枚举和 `BuiltinCatalog` 的补全签名描述。
+- 实现关键字/变量/命令/函数/类型构造器/成员/字面量候选、别名、类型匹配、排序和替换 span。
+- 实现 `for i in`、`[`、`(`、`f(`/`t(`、`.` 和会话参数上下文。
+- 增加 `ReturnType { type, dim }`；`returns=void` 禁止声明；非 point 维度必须为 0；注册失败为宿主编程错误。
+- 实现 `read` 的可选 prompt、CR 去除、空行、EOF/无效 UTF-8 R010，以及 ReferenceHost 默认无 I/O 的确定性行为。
+- 放宽 `FunctionHandler` 的“纯函数”注释为“不接收 Output，但宿主函数可以执行显式 I/O”；不改变函数签名。
+- 更新 CMake；新增测试文件必须手动加入目标。
 
 **测试**
 
-- `line `、`line 1,2 `、`f(`、`type(`、`[`、`.`、会话；
-- 大小写匹配；变量名大小写敏感；
+- 上下文与替换：`line `、`line 1,2 `、`line(`、`line 1,`、`f(`、`t(`、`[`、`(`、`.`、`for i in`、会话、块内语句。
+- 光标边界：token 中间、空白、字符串/注释、词法错误、空输入。
+- 候选与类型：`int`/`number`/`point`/`string`/`bool`/`list`/`any`；Point dim2/dim3；list → point 转换；类型不匹配降权。
+- 匹配：关键字/命令/函数/类型大小写不敏感；变量大小写敏感；别名 `str`。
+- 成员：Point dim2/dim3、list/string `length`、callable/未知无成员；`returnType` 已知/未知。
+- 会话：`NeedInput` 的 prompt/type/dim、Point `(`、不提示可选参数。
+- `read`：prompt、空行、CRLF、EOF、无效 UTF-8、默认无 I/O、注入流和 Output；不得使用真实 `std::cin`。
 - spec §12 的补全用例。
 
 **完成标准**
 
 - spec §12 用例全绿；
-- `unit_completion` 全绿；
-- CLI Tab 可后续接入，不阻塞 M6 完成。
+- `unit_completion` 与 `read` 测试全绿；
+- 不依赖 CLI Tab；CLI Tab 可后续接入；
+- `/W4` 零警告；Debug / Release / Werror / Ninja 全绿；
+- 测试数、CTest 目标数和文档同步更新。
 
 ---
 

@@ -1,6 +1,6 @@
 # Lush 命令语言规范
 
-版本 0.3.6 · 状态：可实施草案
+版本 0.3.7 · 状态：可实施草案
 
 ---
 
@@ -50,6 +50,9 @@ Lush 是一门嵌入 C++ 宿主的命令语言，目标场景是 AutoCAD 式的�
 | D30 | 交互会话只补必选参数；可选参数在命令执行时取默认值；`hint [default]` 属补全/Tooltip，不是会话提示 |
 | D31 | R011 仅用于会话必选参数收到空输入；显式取消/EOF/Ctrl+C 返回 CANCELLED，不产生 R011 诊断 |
 | D32 | 宿主直接提交的 Point 绑定失败没有文本 Span，以输入来源 DirectPoint 标记；错误码仍为 R002/R006 |
+| D33 | `CommandSpec` / `Signature` 可携带可选的 `returnType`；缺省表示未知，void 命令必须省略；仅用于补全/静态推断，运行时不校验 handler 返回值 |
+| D34 | 补全复用现有词法与切词；cursor 是原始文本字节偏移；核心返回纯文本候选，Point 参数额外提供显式 `(`；CLI Tab 暂缓 |
+| D35 | 参考宿主提供 `read(prompt = "") -> string`；它是宿主 I/O 函数，不引入 HostInputService；prompt 经宿主 Output 输出，EOF 或无效 UTF-8 返回 R010 |
 
 ### 0.2 目录
 
@@ -81,6 +84,7 @@ Lush 是一门嵌入 C++ 宿主的命令语言，目标场景是 AutoCAD 式的�
 - 0.3.4：M3 前定稿：赋值 target-first 与目标路径后缀延迟；Point 构造/转换错误码；`INT64_MIN % -1`；短路求值；错误位置契约与 §11.3 Span 表；double 指数规范化；S003 写入目标规则；阶段优先级；`str` 规范名。
 - 0.3.5：M4 语义定稿：变参命令不得有可选参数/默认值；默认值只接受字面量（拒绝 callable）；命令参数先从左到右全部求值再统一绑定（会话按输入逐个绑定）；语句位置 builtin 调用合法；R010 的宿主失败与 Span。
 - 0.3.6：M5 定稿：交互会话只收集必选参数，可选参数默认值在执行时补齐，`hint [default]` 归入补全/Tooltip；R011 仅用于必选空输入；直接提交 Point 的错误无文本 Span，以 DirectPoint 标记；ReferenceHost 兼作 CLI 演示宿主；明确 REPL EOF/Ctrl+C。
+- 0.3.7：M6 补全设计：补全上下文、类型过滤、成员与替换规则；`CommandSpec` / `Signature` 增加可选 `returnType`（仅静态元数据）；参考宿主增加 `read`，明确其宿主 I/O 边界。
 
 ---
 
@@ -946,6 +950,7 @@ CommandSpec {
     aliases     : [string]
     params      : [ParamSpec]     // 顺序即位置参数顺序
     returns     : void | value
+    returnType  : ReturnType?     // 仅 value；缺省 = unknown；void 必须省略
     interactive : bool            // 仅 void 命令可为 true
     help        : string
 }
@@ -959,7 +964,14 @@ ParamSpec {
     variadic    : bool
     hint        : string          // 交互提示与补全说明
 }
+
+ReturnType {
+    type        : int | double | bool | string | list | point | callable
+    dim         : 0 | 2 | 3       // 仅 point 有意义，0 = 未知/不限
+}
 ```
+
+`Signature` 保留注册后解析出的同一个可选 `returnType`；它不改变 §7.2 的动态参数绑定，也不改变命令/函数的运行时值。
 
 注册约束：
 
@@ -969,7 +981,10 @@ ParamSpec {
 - 变参必须是最后一个参数，且变参命令不能有任何可选参数；变参参数自身必须 `optional = false`，且不能有 `default`；
 - 只有可选参数可以有 `default`；必选参数和变参参数不得有 `default`；
 - 默认值只接受字面量：int、double、bool、string、list、Point。callable 不是字面量，不能作为默认值；默认值在注册时按 §7.2 绑定到参数类型（如 `number` 的 int 默认值提升为 double，`point` 的 list 默认值转换为 Point），无法绑定的默认值是注册错误；
-- 注册失败（名称/别名冲突、关键字、参数顺序、变参/默认值非法等）是宿主编程错误，不产生 L/P/S/R 诊断；
+- `returns = void` 时必须省略 `returnType`；`returns = value` 时 `returnType` 可选，缺省表示宿主未声明返回类型；
+- `returnType.dim` 只对 `point` 有意义；非 point 必须为 0，point 只允许 0/2/3；
+- `returnType` 只用于补全和静态推断，**不是运行时契约**；宿主函数实际返回其它类型时不产生新的运行时错误；
+- 注册失败（名称/别名冲突、关键字、参数顺序、变参/默认值非法、void 带返回类型、非法返回维度等）是宿主编程错误，不产生 L/P/S/R 诊断；
 - 注册应在执行脚本/开始会话之前完成；脚本内不能注册。
 - `returns = value` 的可调用体有值形态（callable）；`returns = void` 的命令只能作为语句，没有值形态。
 
@@ -1076,6 +1091,7 @@ LINE (0, 0) (1, 1)
 | `circle` | 命令 | 是 | (c: point dim2, r: number) | `CIRCLE <c> <r>` |
 | `move` | 命令 | 否 | (dx: number, dy: number) | `MOVE <dx> <dy>` |
 | `echo` | 命令 | 否 | (v: any ...) | 值以单空格连接后换行 |
+| `read` | 函数 | 否 | (prompt: string = "") -> string | 输出 prompt 后读取一行 |
 
 交互提示：
 
@@ -1083,6 +1099,16 @@ LINE (0, 0) (1, 1)
 - `circle.c` = `指定圆心`，`circle.r` = `指定半径`
 
 命令执行失败由宿主返回 R010；失败前的输出保留，Span 默认按 §11.3。
+
+`read` 是参考宿主专有的宿主函数，不是语言核心内建；真实宿主可以不提供它。
+
+- `read()` 不输出提示；`read("提示: ")` 先通过宿主 Output 写出提示，再读取一行；
+- 返回内容不包含换行；Windows 风格输入的尾随 `\r` 会被去掉；空行合法，返回空字符串；
+- 读取失败、EOF 或输入不是有效 UTF-8 → R010；
+- 它是 value 函数，不是 interactive 命令，可以出现在表达式位置；语句位置调用会读取并丢弃结果；
+- 它直接使用宿主的输入流，不经过 Driver 的 pending、会话、SourceId、Ctrl+C 或 R011 状态机；
+- v1 不引入统一的 HostInputService；宿主应显式注入输入流和 Output，或在没有输入源时让 `read` 返回 R010；
+- 宿主 value 函数不要求是纯函数；`FunctionHandler` 仍不接收 `Output` 参数，`read` 通过 ReferenceHost 捕获的 Output 输出提示。
 
 ---
 
@@ -1102,6 +1128,8 @@ LINE (0, 0) (1, 1)
 | `point` | `(v)` / `(x,y)` / `(x,y,z)` | 由 list/Point 复制，或由数值构造 |
 | `type` | `(any)` | 返回该值的类型构造器；callable → `type` |
 | `len` | `(list\|string\|point)` | list 长度、string 码点数、point 维度 |
+
+用于补全的静态返回类型：`int` → int，`double` → double，`bool` → bool，`string`/`str` → string，`list` → list，`point` → point（维度未知），`type` → callable，`len` → int；`echo` 是 void 命令。这些返回类型是静态元数据，不改变本表的运行时语义。
 
 表达式位置的 callable 参数个数错误 → **R002**（位置在调用 `(`）；参数类型错误 → **R002**（位置在违规参数）。语句位置的可调用体按命令参数规则报 S002（位置在命令名）。
 
@@ -1335,35 +1363,98 @@ error[P004]: 命令参数不是合法的表达式
 
 ## 12. 补全契约
 
-补全引擎必须复用同一套词法与切词规则，禁止另写一套扫描器。
+补全引擎必须复用同一套词法与切词规则，禁止另写一套扫描器。补全是纯计算：不执行表达式、不调用宿主、不写输出、不产生诊断。
 
-### 12.1 上下文与候选
+### 12.1 输入、光标与替换
 
-| 光标位置 | 候选 |
+- 输入是当前完整缓冲区、原始文本字节偏移 `cursor`、当前 `Env`、当前可调用体注册表和可选的会话 `NeedInput`；REPL 的 pending 文本由调用方拼接。
+- 只分析 `[0, cursor)`；cursor 超出范围、位于字符串/注释/数字字面量中、或前缀存在词法错误时，返回空候选，不产生诊断。
+- cursor 紧接 Identifier 时，用 token 起点到 cursor 的文本做前缀匹配，并替换整个当前 token；cursor 在空白、分隔符或运算符后时，替换空 span。
+- cursor 紧接一个已完成的表达式且没有空白时，不做命令参数补全，避免替换已输入的表达式。
+- 候选携带：插入文本、标签、来源（keyword/command/function/type/variable/member/literal/syntax）、类型/维度、签名或详情、`hint`、可选默认值、`typeMismatch` 和替换 Span。
+- 补全不改变语义，也不执行宿主或会话。
+
+### 12.2 上下文
+
+| 光标位置 | 上下文 |
 |---|---|
-| 语句开头 | 关键字、可见变量、已注册命令/函数 |
-| 表达式位置 | 可见变量、callable（函数/类型构造器）、字面量 |
-| 命令参数第 k 个 | 按 `params[k]` 的类型/维度过滤可见变量；`any` 参数额外列出 callable；附 `hint` |
-| `for i in ` | 可迭代表达式 |
+| 语句开头，或换行 / `;` / `{` / `}` / `else` 之后 | 语句开头 |
+| `=`、运算符、`if (`、`while (`、`for (`、`?`、`:` 等之后 | 表达式 |
+| 顶层语句位置命令名之后、且已出现空白 | 命令参数第 k 个 |
+| `for <IDENT> in ` 之后 | 可迭代表达式 |
 | `[` 或 `[expr,` 内 | 表达式 |
 | `(` 内（Point/分组） | 表达式 |
-| `f(` / `t(` 内 | 该 callable 的参数类型约束 |
-| `.` 后 | `point` → `x/y/z`；`list`/`string` → `length`；callable → 无成员 |
-| 会话中 | 当前缺失参数的类型/维度，附 `prompt` |
+| 表达式位置 `IDENT` 紧贴 `(` | 该 callable 的参数 |
+| `.` 之后 | 成员 |
+| 会话缺少必选参数 | 当前会话参数 |
 
-### 12.2 匹配与插入
+补充规则：
 
-- 关键字、命令/函数/类型构造器名：大小写不敏感前缀匹配；
-- 变量：大小写敏感前缀匹配；
-- 命令参数位置：类型不匹配的变量可降权但仍显示（附类型标签）；
-- 候选携带：插入文本、类型、来源（keyword/command/function/type/variable/member）、签名或详情；
+- 只有表达式位置的紧贴 `IDENT(` 是 callable 调用；`line(` 是语句位置命令 `line` 的第一个 Point/表达式参数，不是函数调用。
+- `for i in` 识别为可迭代上下文；`for (` 的 C 风格头仍按表达式处理。
+- 块内、`{` 后、`;` 后都按语句开头处理；`{}` 不抑制换行，符合 §3 的终止符规则。
+- `.` 的 receiver 只做静态类型推断，不执行任何表达式或副作用。
+
+### 12.3 候选与匹配
+
+候选来源：
+
+- 关键字；
+- 当前 `Env` 的可见变量；
+- 已注册命令和函数；
+- 类型构造器；
+- 字面量模板；
+- 成员；
+- 会话当前参数。
+
+关键字按上下文提供：语句开头提供 `if` / `while` / `for` / `break` / `continue`，`else` 仅在 `}` 后，`in` 仅在 `for <IDENT>` 后；表达式提供 `true` / `false`；`def` / `return` 是保留但未实现的关键字，不进入 M6 候选。
+
+字面量模板：
+
+- 未指定类型的表达式：`true`、`false`；
+- `int` 参数：`0`；
+- `number` 参数：`0`、`0.0`；
+- `bool` 参数：`true`、`false`；
+- `string` 参数：`""`；
+- `list` 参数：`[]`；
+- `point` 参数：`(`；
+- `any` 参数不额外提供字面量模板；
+- 可迭代上下文提供 `[]` 和 `""`，以及已知 list/string 变量。
+
+匹配与类型：
+
+- 关键字、命令/函数/类型构造器名、别名：大小写不敏感前缀匹配；
+- 变量：大小写敏感前缀匹配；成员：大小写敏感前缀匹配；
+- 命令参数按 §7.2 的类型/维度过滤：`int` → int；`number` → int/double；`point` → 维度匹配的 point 或可转换的 list；`string`/`bool`/`list` → 对应值；`any` → 所有变量，并额外列出 callable；
+- 类型不匹配的变量仍显示，但标记 `typeMismatch` 并排在兼容项之后，附类型标签；
 - 补全不得改变语义：在 `line 1,2 ` 处应建议 Point 类型变量与 `(`，而不是数字。
 
-### 12.3 提示（非补全）
+插入与详情：
 
-- 命令缺参时，提示文本来自 `ParamSpec.hint`；
-- 可为 Point 参数提供骨架 `x,y`；
-- 灰字（ghost text）由宿主绘制，核心只提供文本。
+- 核心候选默认只插入纯文本名字；Point 类型上下文额外提供显式 `(` 语法项；不自动附加空格或 `(`。
+- 命令/函数/类型构造器的详情包含签名和帮助；命令参数的详情包含 `hint`；可选参数的详情可显示 `hint [default]`；会话参数的详情使用 `NeedInput.prompt`。
+- 兼容项优先，类型不匹配项最后；同组按稳定的标签顺序排列。
+- 别名作为独立候选参与匹配和插入；规范名候选仍保留。
+
+### 12.4 成员与调用
+
+- `point` 已知 `dim2` → `x`/`y`，`dim3` → `x`/`y`/`z`；维度未知 → `x`/`y`/`z`，z 的运行时合法性仍按 §4。
+- `list` / `string` → `length`；callable、未知类型和其它值 → 无成员。
+- `f(` / `t(` 内按该 callable 的声明参数类型提供候选；已注册函数使用 `Signature.params`，内建使用 §8 的静态签名；类型未知时不额外过滤。
+- 调用的静态类型来自 `Signature.returnType`（若有）；未知返回类型不影响补全本身，但不提供基于返回类型的成员或可迭代候选。
+
+### 12.5 会话补全
+
+- 当前缺少必选参数时使用 `NeedInput.type`、`dim`、`prompt`；
+- 候选规则与命令参数一致；
+- Point 会话输入仍提供 Point 变量和 `(`，不把数字字面量当作默认候选；
+- 可选参数不进入会话补全；会话内仍只接受单行 `barePoint | expr`。
+
+### 12.6 无候选与边界
+
+- 无候选时返回空列表，不返回诊断，不改变 Source/Env/会话状态。
+- 不在字符串、注释或数字字面量内部补全。
+- CLI 的 Tab 补全暂缓；M6 只完成核心 API 与测试。
 
 ---
 
