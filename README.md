@@ -2,15 +2,16 @@
 
 一个面向「命令行 + GUI 深度融合」的嵌入式命令语言与命令执行框架。
 
-- 语言规范：[docs/spec.md](docs/spec.md)
-- 开发里程碑：[docs/steps.md](docs/steps.md)
-- 当前状态：**M6 已完成**（M1 词法 + M2 AST/Parser + M3 求值/内建 + M4 命令系统/参考宿主 + M5 会话/REPL/脚本执行 + M6 补全核心与 `read`；CLI Tab 尚未接入）
+- 语言规范：[docs/spec.md](docs/spec.md)（0.4.0 规划草案；0.3.7 已实现）
+- 开发里程碑：[docs/steps.md](docs/steps.md)（M1–M6 已完成，M7–M11 计划）
+- 当前状态：**M6 已完成，M7–M11 已规划**（M1 词法 + M2 AST/Parser + M3 求值/内建 + M4 命令系统/参考宿主 + M5 会话/REPL/脚本执行 + M6 补全核心与 `read`；数值字符串、用户函数、CLI Tab、编辑器分析和两份用户文档见 `docs/steps.md`）
 
 ## 环境
 
 - CMake 3.25+
 - MSVC 19.44+（Visual Studio 2022 Build Tools）
 - 可选：Ninja 1.13+
+- M9 计划：vendored replxx（BSD，CLI 可选依赖；core 仍零第三方依赖）
 
 ## 构建
 
@@ -47,8 +48,11 @@ ctest --test-dir build -C Debug --output-on-failure
 - `src/lush/core/`：语言核心（已实现 UTF-8、Source、Diagnostic、Token、Lexer、AST、Parser、Value、Cell/Env、Eval、Validate、格式化和内建）
 - `src/lush/command/`：命令注册、参数绑定、宿主、交互会话
 - `src/lush/driver/`：脚本 / REPL 执行状态机、SourceTable（已实现）
-- `src/lush/completion/`：补全核心（已实现；CLI Tab 暂未接入）
+- `src/lush/completion/`：补全核心（已实现；M9 接 CLI Tab）
 - `src/reference/`：参考宿主 `line` / `circle` / `move` / `read`（已实现；CLI 演示宿主）
 - `src/lush/`：公共头
-- `src/cli/`：命令行前端（REPL、脚本、`-e`、dump）
+- `src/cli/`：命令行前端（REPL、脚本、`-e`、dump；M9 接 replxx）
+- `third_party/replxx/`：M9 计划中的 vendored CLI 行编辑依赖
+- `examples/`：M10/M11 的宿主和文档示例
 - `tests/`：单元测试（M3–M6 golden/单元测试已落地；`lush_tests` 219 个测试）
+- `docs/language.md`、`docs/embedding.md`：M11 计划交付的两份用户文档

@@ -1,4 +1,4 @@
-# Lush 开发里程碑（M1–M6）
+# Lush 开发里程碑（M1–M11）
 
 本文是开发路线图，说明每个里程碑的目标、文件、任务、测试和完成标准。语言语义仍以 `docs/spec.md` 为唯一来源；AGENTS.md 里的构建/测试约定同样适用。
 
@@ -12,9 +12,16 @@
 | M3 求值 | ✅ 已完成 | Value、Cell/Env、Eval、Validate、格式化、内建、非命令 golden |
 | M4 命令 | ✅ 已完成 | 命令 spec/registry、参数绑定、参考宿主、命令 golden |
 | M5 会话 / REPL | ✅ 已完成 | Session、Driver、SourceId/SourceTable、脚本/REPL CLI |
-| M6 补全 | ✅ 已完成 | 补全核心、类型过滤、`returnType`、参考宿主 `read`；CLI Tab 暂缓 |
+| M6 补全 | ✅ 已完成 | 补全核心、类型过滤、`returnType`、参考宿主 `read`；CLI Tab 移至 M9 |
+| M7 数值字符串 | ⬜ 计划 | `int(string)` / `double(string)`、R013、严格解析 |
+| M8a 函数语法 | ⬜ 计划 | `def`/`return`、`->`、类型注解、AST、Parser、静态校验 |
+| M8b 函数运行时 | ⬜ 计划 | 用户函数值、Source/AST 所有权、作用域、return、递归、REPL |
+| M8c 函数工具链 | ⬜ 计划 | 用户函数签名、补全、类型注解补全、REPL 诊断 |
+| M9 CLI Tab | ⬜ 计划 | vendored replxx、行编辑/历史/补全、Windows 实测 |
+| M10 编辑器/宿主 API | ⬜ 计划 | trivia、best-effort token、公开宿主 API、QSyntaxHighlighter 示例 |
+| M11 用户文档 | ⬜ 计划 | 语言使用简述、宿主集成说明、可编译示例 |
 
-M1–M6 已完成。`lush_tests` 当前 219 个测试，CTest 目标为 `lush_tests`、`lush_version`、`lush_dump_tokens`、`lush_dump_ast`、`lush_eval`。CLI Tab 补全仍未接入，不阻塞 M6。
+M1–M6 已完成。`lush_tests` 当前 219 个测试，CTest 目标为 `lush_tests`、`lush_version`、`lush_dump_tokens`、`lush_dump_ast`、`lush_eval`。M7–M11 的语义目标见 `docs/spec.md` 0.4.0；实现顺序按本文执行，不得提前声称后续功能已可用。
 
 ---
 
@@ -632,7 +639,7 @@ BoundaryInt @...
 - `CommandSpec` / `Signature` 增加可选 `returnType`（`ValueType + dim`），缺省为 unknown；只作补全元数据，运行时校验不做。
 - 参考宿主增加 `read(prompt: string = "") -> string`；通过注入的 `std::istream` + `core::Output` 工作；EOF/读取失败/无效 UTF-8 → R010。
 - 不引入 HostInputService；`read` 直接使用宿主输入流，不接入 Driver 的 pending/session/SourceId/Ctrl+C 状态机。
-- CLI Tab 暂缓，M6 完成不依赖 Tab。
+- CLI Tab 移至 M9；M6 完成不依赖 Tab。
 
 **实现结果**
 
@@ -679,9 +686,356 @@ BoundaryInt @...
 
 - spec §12 用例全绿；
 - `unit_completion` 与 `read` 测试全绿；
-- 不依赖 CLI Tab；CLI Tab 可后续接入；
+- 不依赖 CLI Tab；CLI Tab 在 M9 接入；
 - `/W4` 零警告；Debug / Release / Werror / Ninja 全绿；
 - 测试数、CTest 目标数和文档同步更新。
+
+---
+
+## M7 — 数值字符串（计划）
+
+**目标**：让 `read()` 等宿主输入得到的 string 能显式转成数字，同时不引入隐式转换。
+
+**语义**
+
+- `int(string)`：允许首尾 ASCII 空格/水平制表符/`\r`；只接受可选 `+`/`-` 加十进制数字；不接受小数点、指数、下划线、十六进制；越界 R005，格式非法 R013。
+- `double(string)`：与 §2.6 的数值语法一致；不接受 `1.`、`.5`、`nan`、`inf`；越界/下溢/非有限 R013。
+- 使用 locale 无关的 `std::from_chars`；不做隐式 string → number。
+- 静态返回类型仍为 int / double。
+
+**文件**
+
+- `src/lush/core/builtins.cpp`（`callInt` / `callDouble` 和签名说明）
+- `tests/unit_eval.cpp` / `tests/golden_spec.cpp`
+- `docs/spec.md`、本文件、`AGENTS.md`、`README.md`
+
+**测试**
+
+- 空串、纯空白、`+42`、`-42`、前导零、`INT64_MIN/MAX`、越界；
+- `"3.14"` 到 `double`、`"3.14"` 到 `int` 拒绝；
+- `1e3`、`1e-3`、`1.`、`.5`、`1e`、`nan`、`inf`、前后空格、内部空格、locale 分隔符；
+- `read()` 结果直接转数字的集成用例（库内测试不读真实 stdin）。
+
+**完成标准**
+
+- 不改变非 string 输入的既有语义；
+- R005/R013 的位置符合 §11.3；
+- Debug / Release / Werror / Ninja 全绿，测试数更新。
+
+---
+
+## M8a — 用户函数：语法、类型与静态结构（计划）
+
+**目标**：完成 `def` / `return` 的语法、AST、类型注解和静态校验，不执行函数体。
+
+**语法**
+
+```lush
+def f(a, b: string, c: point2) -> double { ... }
+def f(x: int) -> int return x + 1
+def f() { ... }
+```
+
+- 只允许顶层 `def`；嵌套/块内/函数内 `def` → S011。
+- 参数注解省略 = `any`；返回注解省略 = `void`；`void` 只能作为返回类型。
+- 支持类型名：`int`、`double`、`bool`、`string`、`list`、`point`、`point2`、`point3`、`any`、`callable`；`void` 仅返回。
+- 参数不支持默认值、可选参数、变参；参数名必须唯一。
+- 支持 block body 和单条 statement body。
+
+**实现点**
+
+- Lexer 增加 `Arrow` token，按最长匹配处理 `->`。
+- AST 增加 `Def` / `Return`、参数声明、`TypeAnnotation`、函数体；AST dump 更新。
+- Parser 增加 `def` / `return`，更新 `Incomplete` 判定（未闭合 body/括号）。
+- 校验阶段收集全部顶层 `def`，建立函数签名表；支持前向引用、递归调用和同名冲突检测。
+- 静态检查：
+  - 函数名/参数名/类型注解合法性；
+  - `return` 只能出现在函数体；
+  - 值函数必须有 `->`，void 函数不得返回表达式；
+  - 值函数的 `return expr` 只做 int → double 提升，其它返回类型不兼容；
+  - 参数 `double` 接受 int 并转换；`int` 只接受 int；
+  - `point2`/`point3` 不接受 list → point；必须显式 `point(...)`；
+  - 用户函数名大小写不敏感，进入 common callable namespace；冲突按 S011/S003 处理。
+- `S007` 不再产生；新增 S010/S011/S012 的诊断位置和测试。
+- 顶层 `def` 收集后按顺序安装函数值；同一脚本重复定义同名函数 → S011；REPL 重定义允许替换（运行时 M8b 处理）。
+
+**文件**
+
+- `src/lush/core/token.h`、`lexer.h/.cpp`
+- `src/lush/core/ast.h/.cpp`
+- `src/lush/core/parser.h/.cpp`
+- `src/lush/core/validate.h/.cpp`
+- `src/lush/core/eval.h`（预声明接口）
+- `tests/unit_lexer.cpp`、`unit_parser.cpp`、`unit_eval.cpp`、`golden_spec.cpp`
+- `src/cli/main.cpp` 的 `--dump-ast` 输出
+- 文档同步
+
+**测试**
+
+- `def` 两种 body、类型注解、`->`、参数列表、空参数；
+- 非顶层 `def`、重复参数、未知类型、`void` 参数、重复函数、名称冲突；
+- `return` 位置、值函数/void 函数的静态误用；
+- `def` 跨行/未闭合 body 的 `Incomplete`；
+- `--dump-ast` 覆盖 Def/Return。
+
+**完成标准**
+
+- 语法和静态诊断稳定；
+- 尚未执行函数体时，相关测试可只验证解析/校验；
+- `S007` 相关旧测试迁移到 S010/S011/S012；
+- 不提前修改 REPL 行为；M8b 再接执行。
+
+---
+
+## M8b — 用户函数：运行时、Source 与 REPL（计划）
+
+**目标**：让用户函数作为一等 callable 执行，支持 return、递归、函数值传递和 REPL 持久化。
+
+**运行时设计**
+
+- `UserFunction` 持有：
+  - 函数体 AST 的共享所有权；
+  - `std::shared_ptr<const core::Source>`（或等价 SourceHandle）；
+  - `SourceId`（仅用于诊断/SourceTable 查询）；
+  - 参数声明、返回类型、函数名。
+- **不能只存 SourceId**：SourceId 不拥有 AST，也不保证 SourceTable 生命周期；函数值必须能独立于 `Program` 存活。
+- 顶层 `def` 在程序执行前安装到 common callable namespace；函数体在调用时执行。
+- 函数调用创建新的局部作用域；参数按注解绑定；函数体读取当前全局环境；v1 不支持闭包，不捕获定义点的局部变量。
+- 函数体内赋值沿用 §6.1：找到最近可见绑定就写入，找不到才创建局部绑定。
+- Eval 增加返回控制流：`return expr` / `return;` 穿过 block/if/while/for 到函数边界；`break`/`continue` 仍只作用于循环。
+- 值函数自然结束未 return → R014；递归深度 >1024 → R015；`return` 在函数外 → S010。
+- void 函数只能作语句调用；在表达式位置使用 → S012。
+- 函数值可存入变量/list、作为参数/返回值；`type(f)`、`string(f)`、`==` 按现有 callable 规则。
+- REPL 中定义成功后函数值跨 `feedLine` 保留；Source/AST 生命周期与 `Env` 一致。
+
+**文件**
+
+- `src/lush/core/value.h/.cpp`（UserFunction / callable 接口，按实现需要调整）
+- `src/lush/core/eval.h/.cpp`（Flow::Return、函数作用域、递归计数）
+- `src/lush/core/cell.h`（如需环境捕获接口）
+- `src/lush/driver/driver.h/.cpp`（REPL 顶层 def 安装、Source 持久化）
+- `src/lush/driver/source_table.*`（如需公开查找/共享 Source）
+- `tests/unit_eval.cpp`、`unit_driver.cpp`、`unit_command.cpp`、`golden_spec.cpp`
+
+**测试**
+
+- 值函数、void 函数、裸 return、自然 void、自然结束报 R014；
+- 参数类型/转换：double 收 int、int 拒 double、point2/3 拒 list；
+- 递归/互递归/前向引用、1024 边界；
+- 函数值存变量/list、作为参数、作为返回值；
+- 函数内全局读取/写入、局部参数、无闭包行为；
+- REPL 跨行 def、跨行调用、错误 Source/Span、Ctrl+C/EOF 行为不回归；
+- 函数体中的命令、`echo`、`read`。
+
+**完成标准**
+
+- 函数定义不悬空；REPL 多次调用稳定；
+- 错误码、Span、Source 正确；
+- 现有 219 个测试不回归；
+- Debug / Release / Werror / Ninja 全绿。
+
+---
+
+## M8c — 用户函数：补全与工具链（计划）
+
+**目标**：让用户函数在补全、签名详情、返回类型推断和 REPL 诊断中完整可见。
+
+**实现点**
+
+- Callable 签名增加用户函数元数据：参数名、注解类型、必选性、返回类型（void / typed / unknown）。
+- 补全：
+  - 语句开头、表达式、命令参数、调用参数、会话参数识别用户函数；
+  - 插入纯文本名字；语句位置不自动补 `(`；
+  - 用户函数候选详情显示 `name(a: int, b: string) -> double`；
+  - `f().` 使用返回值类型做成员补全；void 不提供成员/可迭代候选；
+  - 参数类型过滤使用 §3.10 规则（point2/3 不接受 list）。
+- `def` 后支持函数名/参数名/类型名/`->`/`{` 的上下文（至少类型名和 `def` 关键字）；
+- `return` 在函数体语句开头出现；
+- REPL/Source：函数定义和调用错误保留正确 SourceId/Span；
+- 函数重定义替换后，补全签名同步更新。
+
+**文件**
+
+- `src/lush/completion/completion.h/.cpp`
+- `src/lush/command/registry.*`（如需统一签名描述）
+- `src/lush/core/value.*`（UserFunction 元数据）
+- `tests/unit_completion.cpp`
+- `docs/spec.md` §12、本文件
+
+**测试**
+
+- 用户函数在语句/表达式/参数/会话中可见；
+- 参数类型过滤、void 排除、返回类型成员；
+- def/类型名补全、`->` 和类型错误；
+- 用户函数重定义、签名更新；
+- 任意函数值（变量中）的签名展示或明确的 unknown 降级。
+
+**完成标准**
+
+- 用户函数与内建/命令的补全行为一致；
+- CLI Tab 仍未接入，但 completion 已准备好；
+- 核心补全仍不执行表达式/宿主。
+
+---
+
+## M9 — CLI 行编辑器与 Tab（计划）
+
+**目标**：在 CLI 中使用 replxx 提供历史、编辑、Tab 补全和候选展示，同时不把第三方库引入 core。
+
+**依赖**
+
+- vendored `third_party/replxx`。
+- 固定 commit：`1f149bfe20bf6e49c1afd4154eaf0032c8c2fda2`（master，2021-11-25；比 `release-0.0.4` 多 15 个提交，包含 Windows raw mode/print/bracketed paste 修复）。
+- 许可：BSD；保留上游 LICENSE 与来源说明。
+- 使用 CMake 选项控制，例如 `LUSH_WITH_REPLXX`；关闭时回退到现有 `std::getline`，不提供 Tab。
+- replxx 目标作为第三方/SYSTEM 目标，避免第三方 warning 被 `/W4`/Werror 放大。
+- 核心 `lush_core` 仍零第三方依赖。
+
+**实现点**
+
+- `cli/repl.cpp` 改用 replxx `input(prompt)`；保留非 TTY 回退。
+- 行编辑器适配：
+  - `Driver::pendingText()` 或等价只读接口提供完整 pending buffer；
+  - 将 pending buffer + 当前 replxx 行拼成 `CompletionRequest.source`；
+  - Lush byte cursor / `replaceSpan` ↔ replxx `contextLen`（Unicode code point）转换；
+  - 候选 `insertText` 回填；Point 的 `(` 语法项正常插入；
+  - 会话 `NeedInput` 时传入 type/dim/prompt；
+  - `read` 执行期间不占用 replxx 行编辑。
+- 行为：
+  - Enter 提交；`NeedMore` 继续提示；
+  - Tab 补全；无候选/多候选行为按 replxx 配置；
+  - Up/Down 历史；历史只记录完整提交行；
+  - Ctrl+C 映射到 Driver cancel/清行；EOF 退出；非 TTY 行为不变。
+- 可选：使用 replxx highlighter 做 CLI 词法着色；不替代 M10 的宿主编辑器分析。
+
+**文件**
+
+- `third_party/replxx/`（vendor）
+- `src/cli/repl.cpp`、`src/cli/main.cpp`
+- `src/CMakeLists.txt`、`CMakePresets.json` / 顶层 CMake
+- `src/lush/driver/driver.h/.cpp`（pending 文本接口）
+- `README.md`、`AGENTS.md`
+
+**测试**
+
+- Windows 实际控制台：Tab、候选、历史、Ctrl+C、EOF、多行 pending、会话参数、中文/UTF-8 编辑；
+- 非 TTY 脚本/管道路径不回归；
+- 纯 C++ 适配层测试：byte ↔ codepoint contextLen、pending 拼接、替换 span；
+- Linux 至少完成 CMake 配置和编译（如能运行 CTest 更好）。
+
+**完成标准**
+
+- Windows 手工验收通过；Linux 编译通过；
+- 关闭 replxx 时 CLI 仍可构建运行（无 Tab）；
+- 不改变脚本模式、Driver 语义和 `read` 行为；
+- 第三方许可与版本记录完整。
+
+---
+
+## M10 — 编辑器分析接口与宿主 API（计划）
+
+**目标**：为宿主编辑器提供稳定的、容错的词法 span，并明确宿主嵌入 API；不把 Qt 引入 core。
+
+**编辑器分析**
+
+- 新增 best-effort 词法结果，与严格 `LexResult` 分离：
+  - comments/trivia 区间；
+  - 完整 token、未完成字符串 token、非法字符/数字错误 span；
+  - `Complete / Incomplete / Error` 状态；
+  - 多条诊断，不在首个错误处停止；
+  - 保证扫描前进，避免死循环。
+- 严格执行路径继续首错中止；Parser/Validator 不消费 best-effort 结果。
+- 补全中对 `#` 的启发式扫描改为消费 trivia（如可行）。
+- UTF-8 字节 offset 保持为契约；宿主负责转换为 UTF-16/Qt 位置。
+- 提供/文档化：
+  - token/trivia span 接口；
+  - Source 生命周期；
+  - 错误 span；
+  - `QSyntaxHighlighter` 适配示例（Qt 仅在 examples/宿主层）。
+- 不做语义高亮（变量/命令分类）作为首版必要条件；token 词法高亮优先。
+
+**宿主 API**
+
+- 明确公开 include 与 CMake target：
+  - `lush::core`、`lush::command`、`lush::driver`、`lush::completion`；
+  - 可选 `lush::reference`、CLI。
+- 新增 umbrella header 或明确推荐 include 组合（当前 `lush.h` 只有 core）。
+- 文档化：
+  - `Env`/`Registry`/`Output`/`Driver` 所有权与生命周期；
+  - `runScript` / `feedLine` / `NeedMore` / `NeedInput` / `Error` / `Cancelled`；
+  - SourceId/SourceTable/diagnostic；
+  - completion 和 editor analysis；
+  - `read` 输入注入；
+  - 线程安全（单线程）和递归上限；
+  - 错误不跨异常边界。
+- 提供可编译 `examples/embed.cpp`；如果做 Qt 示例，放在 examples，不链接 core。
+
+**文件**
+
+- `src/lush/core/lexer.h/.cpp` 或新增 `src/lush/analysis/`
+- `src/lush/lush.h` / 新 umbrella
+- `examples/embed.cpp`
+- `src/CMakeLists.txt`、`tests/CMakeLists.txt`
+- `tests/unit_lexer.cpp` / 新 `unit_analysis.cpp`
+
+**测试**
+
+- 注释/trivia、行注释 EOF、未闭合字符串、未知转义、非法 UTF-8、非法数字、多错误继续扫描；
+- best-effort 不改变严格 lexer 结果；
+- UTF-8/UTF-16 映射示例（宿主侧可单独测试）；
+- 宿主 API 示例编译；
+- completion 对 trivia 的回归。
+
+**完成标准**
+
+- 宿主能仅凭公开 API 获得 token/trivia/diagnostic 并渲染；
+- core 仍无 Qt/第三方依赖；
+- Qt 示例可独立构建或明确标为可选文档示例。
+
+---
+
+## M11 — 用户文档与示例（计划）
+
+**目标**：交付两份用户文档，并与实际行为、测试和示例同步。
+
+**1. `docs/language.md`**
+
+- Lush 是什么、与宿主命令行的关系；
+- 词法、类型、值语义、Point/list、ref；
+- 命令 vs 函数、语句/表达式调用；
+- 用户函数：类型注解、void/return、顶层/hoist、递归、无闭包；
+- `int`/`double` 字符串转换与错误；
+- 会话/REPL、Incomplete、Ctrl+C；
+- 诊断与常见错误；
+- 完整可运行示例。
+
+**2. `docs/embedding.md`**
+
+- 构建/链接/版本；
+- `Env`/`Registry`/`Output`/`Driver` 生命周期；
+- 命令和函数注册，`read` 注入；
+- 脚本/REPL/会话状态机；
+- completion 接入（byte cursor、replaceSpan、replxx 适配）；
+- 编辑器词法分析、trivia、未完成输入、错误 span；
+- UTF-8 ↔ Qt UTF-16 映射与 QSyntaxHighlighter 示例；
+- SourceId/SourceTable、诊断归属；
+- 线程、递归上限、错误边界；
+- 最小可编译示例。
+
+**文件**
+
+- `docs/language.md`
+- `docs/embedding.md`
+- `examples/embed.cpp`（M10 产物）
+- `README.md`、`AGENTS.md` 文档入口
+- 文档示例的构建/测试
+
+**完成标准**
+
+- 两份文档均标注适用于 0.4.0；
+- 文档中的代码示例可编译/可运行；
+- 不把未实现功能写成已实现；
+- README/AGENTS/spec 版本和测试数一致。
 
 ---
 
@@ -689,9 +1043,11 @@ BoundaryInt @...
 
 - 依赖方向：`cli → driver → command → core`；`completion → core + command`；`reference → command`。反向依赖不允许。
 - `core` 只依赖标准库，不引入 Qt 或第三方库。
+- `replxx` 是 CLI 可选依赖，必须 vendored/pinned；不得被 core/command/driver/completion 反向依赖。关闭依赖时 CLI 仍要能构建。
 - 每个语义变更先改 `docs/spec.md`，再补 golden/单元测试，最后改代码。
 - 每个 bug 修复补回归测试；每个错误码至少一个用例。
 - 每个里程碑结束都要：`/W4` 零警告、相关测试全绿、更新 `README.md` / `AGENTS.md` 的进度。
-- 不要提前实现后续里程碑的模块；M2 不写求值，M3 不写命令系统，M4 不写会话。
-
-M7（收尾、全量 golden、性能与文档统一）暂不在本文展开；M6 完成后再单独规划。
+- 不要提前实现后续里程碑的模块；M8a 不执行函数，M8b 不接 CLI Tab，M9 不重写编辑器分析协议。
+- 函数值必须拥有 AST 和 Source；SourceId 只做诊断/查询，禁止用裸 SourceId 指向已销毁的 AST/SourceTable。
+- 测试基线：M6 结束 219 个测试；每个里程碑结束时更新实际数量，不固定提前写死。
+- 建议验收顺序：M7 → M8a → M8b → M8c → M9 → M10 → M11；需要并行时只能并行文档整理和纯测试设计，不能跨语义门禁合并实现。
