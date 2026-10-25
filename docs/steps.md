@@ -13,7 +13,7 @@
 | M4 命令 | ✅ 已完成 | 命令 spec/registry、参数绑定、参考宿主、命令 golden |
 | M5 会话 / REPL | ✅ 已完成 | Session、Driver、SourceId/SourceTable、脚本/REPL CLI |
 | M6 补全 | ✅ 已完成 | 补全核心、类型过滤、`returnType`、参考宿主 `read`；CLI Tab 移至 M9 |
-| M7 数值字符串 | ⬜ 计划 | `int(string)` / `double(string)`、R013、严格解析 |
+| M7 数值字符串 | ✅ 已完成 | `int(string)` / `double(string)`、R013、严格解析 |
 | M8a 函数语法 | ⬜ 计划 | `def`/`return`、`->`、类型注解、AST、Parser、静态校验 |
 | M8b 函数运行时 | ⬜ 计划 | 用户函数值、Source/AST 所有权、作用域、return、递归、REPL |
 | M8c 函数工具链 | ⬜ 计划 | 用户函数签名、补全、类型注解补全、REPL 诊断 |
@@ -21,7 +21,7 @@
 | M10 编辑器/宿主 API | ⬜ 计划 | trivia、best-effort token、公开宿主 API、QSyntaxHighlighter 示例 |
 | M11 用户文档 | ⬜ 计划 | 语言使用简述、宿主集成说明、可编译示例 |
 
-M1–M6 已完成。`lush_tests` 当前 219 个测试，CTest 目标为 `lush_tests`、`lush_version`、`lush_dump_tokens`、`lush_dump_ast`、`lush_eval`。M7–M11 的语义目标见 `docs/spec.md` 0.4.0；实现顺序按本文执行，不得提前声称后续功能已可用。
+M1–M7 已完成。`lush_tests` 当前 223 个测试，CTest 目标为 `lush_tests`、`lush_version`、`lush_dump_tokens`、`lush_dump_ast`、`lush_eval`。M8–M11 的语义目标见 `docs/spec.md` 0.4.0；实现顺序按本文执行，不得提前声称后续功能已可用。
 
 ---
 
@@ -692,7 +692,7 @@ BoundaryInt @...
 
 ---
 
-## M7 — 数值字符串（计划）
+## M7 — 数值字符串（已完成）
 
 **目标**：让 `read()` 等宿主输入得到的 string 能显式转成数字，同时不引入隐式转换。
 
@@ -703,10 +703,17 @@ BoundaryInt @...
 - 使用 locale 无关的 `std::from_chars`；不做隐式 string → number。
 - 静态返回类型仍为 int / double。
 
+**实现结果**
+
+- `callInt` / `callDouble` 已接受 string；新增 `R013`。
+- `unit_eval` 增加成功与错误用例；`unit_reference` 增加 `read()` 数值转换用例；`lush_tests` 共 223 个测试。
+- 原有非 string 转换路径保持不变。
+
 **文件**
 
 - `src/lush/core/builtins.cpp`（`callInt` / `callDouble` 和签名说明）
-- `tests/unit_eval.cpp` / `tests/golden_spec.cpp`
+- `src/lush/core/diagnostic.h/.cpp`（R013）
+- `tests/unit_eval.cpp` / `tests/unit_reference.cpp` / `tests/golden_spec.cpp`
 - `docs/spec.md`、本文件、`AGENTS.md`、`README.md`
 
 **测试**
@@ -831,7 +838,7 @@ def f() { ... }
 
 - 函数定义不悬空；REPL 多次调用稳定；
 - 错误码、Span、Source 正确；
-- 现有 219 个测试不回归；
+- 现有 223 个测试不回归；
 - Debug / Release / Werror / Ninja 全绿。
 
 ---
@@ -1049,5 +1056,5 @@ def f() { ... }
 - 每个里程碑结束都要：`/W4` 零警告、相关测试全绿、更新 `README.md` / `AGENTS.md` 的进度。
 - 不要提前实现后续里程碑的模块；M8a 不执行函数，M8b 不接 CLI Tab，M9 不重写编辑器分析协议。
 - 函数值必须拥有 AST 和 Source；SourceId 只做诊断/查询，禁止用裸 SourceId 指向已销毁的 AST/SourceTable。
-- 测试基线：M6 结束 219 个测试；每个里程碑结束时更新实际数量，不固定提前写死。
+- 测试基线：M7 结束 223 个测试；每个里程碑结束时更新实际数量，不固定提前写死。
 - 建议验收顺序：M7 → M8a → M8b → M8c → M9 → M10 → M11；需要并行时只能并行文档整理和纯测试设计，不能跨语义门禁合并实现。

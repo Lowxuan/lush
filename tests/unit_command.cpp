@@ -349,7 +349,7 @@ LUSH_TEST(command_builtin_statement_calls) {
     {
         Env env;
         const auto result = runWithBuiltins(env, "int \"x\"\n");
-        expectError(result, ErrorCode::R002, 1, 5);
+        expectError(result, ErrorCode::R013, 1, 5);
     }
     {
         Env env;

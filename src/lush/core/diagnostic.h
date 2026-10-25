@@ -41,6 +41,7 @@ enum class ErrorCode {
     R010,
     R011,
     R012,
+    R013,
 };
 
 std::string_view errorCodeName(ErrorCode code) noexcept;

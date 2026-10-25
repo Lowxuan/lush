@@ -355,7 +355,7 @@ LUSH_TEST(G46) {
 LUSH_TEST(G47) {
     Env env;
     const auto result = runScript(env, "echo type(1)(\"x\")\n");
-    expectError(result, ErrorCode::R002, 1, 14);
+    expectError(result, ErrorCode::R013, 1, 14);
 }
 
 LUSH_TEST(G48) {

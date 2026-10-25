@@ -4,8 +4,8 @@
 
 ## 先读什么
 
-- **语义唯一来源：`docs/spec.md`（v0.4.0 规划草案；0.3.7 已实现）。** 代码与 spec 冲突时以 spec 为准；要改语义，先改 spec 和 golden，再改代码。M7–M11 的语义已写入 0.4.0，但代码尚未实现。
-- `docs/steps.md`：M1–M11 开发里程碑、文件、任务、测试与完成标准；M7–M11 是当前计划。
+- **语义唯一来源：`docs/spec.md`（v0.4.0；M7 已实现，M8–M11 规划）。** 代码与 spec 冲突时以 spec 为准；要改语义，先改 spec 和 golden，再改代码。M8–M11 的语义已写入 0.4.0，但代码尚未实现。
+- `docs/steps.md`：M1–M11 开发里程碑、文件、任务、测试与完成标准；M8–M11 是当前计划。
 - `README.md`：构建入口。
 - `start.md` / `teaching.md`：历史需求与选型讨论，**不是规范**。`teaching.md` 里推荐的 peglib / ANTLR / Lua 等均未采用；本项目使用手写递归下降 + 优先级爬升，零第三方依赖。
 - **`docs/spec.md` 是 UTF-8。** 直接按 UTF-8 读取；不要按 GBK/cp936 解码。
@@ -14,17 +14,18 @@ spec 很长（约 2230 行），按需读：§0.1 决策表、§2–§8 语义�
 
 ## 当前状态（不要假设功能已存在）
 
-- **M0、M1、M2、M3、M4、M5、M6 已完成；M7–M11 仅完成规划和文档。**
+- **M0、M1、M2、M3、M4、M5、M6、M7 已完成；M8–M11 仅完成规划和文档。**
   - `lush_core` 已实现 `utf8`、`source`、`diagnostic`、`token`、`lexer`、`version`、`ast`、`parser`、`value`、`cell`、`validate`、`eval`、`format`、`builtins`、`checked`、`output`；
   - CLI 支持 `--version`、`--help`、`--dump-tokens <file>`、`--dump-tokens -e "<source>"`、`--dump-ast <file>`、`--dump-ast -e "<source>"`、`lush` REPL、`lush <file>`、`lush -e "<source>"`；
-  - M6 补全核心与参考宿主 `read` 已实现；CLI Tab 尚未接入（M9 计划）。
+  - M6 补全核心与参考宿主 `read` 已实现；M7 已支持 `int(string)` / `double(string)`；CLI Tab 尚未接入（M9 计划）。
 - M4 已完成：`lush_command` / `lush_reference` 已实现命令注册、参数绑定、宿主 API 和 `line` / `circle` / `move`；`int 1` 等语句位置 builtin 调用已开放。
 - M5 已完成：`command::Session`、`driver::Driver`、`driver::SourceTable`、REPL/脚本 CLI、SourceId/Source 信息和 ReferenceHost 演示宿主已接入。
 - M6 已完成：`lush_completion`、`CompletionRequest/Result`、`returnType` 元数据、参考宿主 `read` 和 `unit_completion` / `unit_reference` 已实现；CLI Tab 仍未接入。
-- M7–M11 的计划：数值字符串（M7）；用户函数语法/运行时/补全（M8a–M8c）；CLI Tab + replxx（M9）；编辑器分析与宿主 API（M10）；两份用户文档（M11）。
+- M7 已完成：`int(string)` / `double(string)`、R013、`unit_eval` / `unit_reference` 用例。
+- M8–M11 的计划：用户函数语法/运行时/补全（M8a–M8c）；CLI Tab + replxx（M9）；编辑器分析与宿主 API（M10）；两份用户文档（M11）。
 - M2 的 AST/Parser 规则、M3 的求值规则、M4 的命令规则、M5 的会话规则和 M6 的补全规则已在 `docs/spec.md` 和 `docs/steps.md` 实现并测试。
 - spec §15 的 G01–G52 中，M3 的非命令 golden 已在 `tests/golden_spec.cpp` 落地；命令 golden 已在 `tests/unit_command.cpp` 落地；会话/驱动测试在 `tests/unit_driver.cpp` 落地；补全/`read` 测试在 `tests/unit_completion.cpp` / `tests/unit_reference.cpp` 落地。
-- 当前 `lush_tests` 有 219 个测试；CTest 有五个目标：`lush_tests`、`lush_version`、`lush_dump_tokens`、`lush_dump_ast`、`lush_eval`。
+- 当前 `lush_tests` 有 223 个测试；CTest 有五个目标：`lush_tests`、`lush_version`、`lush_dump_tokens`、`lush_dump_ast`、`lush_eval`。
 
 M1 词法实现约定（已完成）：
 
@@ -87,11 +88,17 @@ M6 补全实现（已完成；CLI Tab 移至 M9）：
 - 关键字/命令/函数/类型名大小写不敏感；变量/成员大小写敏感；别名作为独立候选；类型不匹配变量保留并降权。
 - 核心插入纯文本；Point 参数额外提供显式 `(`；不自动追加空格或 `(`。CLI Tab 移至 M9。
 - 参考宿主增加 `read(prompt: string = "") -> string`：宿主注入 `std::istream` + `core::Output`；空行合法，去掉尾随 `\r`；EOF/读取失败/无效 UTF-8 → R010；直接读宿主输入，不接入 Driver 的 session/SourceId/Ctrl+C；不引入 HostInputService。
-- `lush_completion`、`tests/unit_completion.cpp`、`tests/unit_reference.cpp` 已加入；`command/spec.h` 的 `returnType`、`host.h` 注释、`registry.*` 枚举/校验、`reference_host.*`、CLI 构造和 CMake 已更新；`lush_tests` 共 219 个测试。
+- `lush_completion`、`tests/unit_completion.cpp`、`tests/unit_reference.cpp` 已加入；`command/spec.h` 的 `returnType`、`host.h` 注释、`registry.*` 枚举/校验、`reference_host.*`、CLI 构造和 CMake 已更新；M6 完成时 `lush_tests` 共 219 个测试。
 
-M7–M11 规划摘要（未实现，详见 `docs/steps.md`）：
+M7 数值字符串实现（已完成）：
 
-- M7：`int(string)` / `double(string)`，严格数值字符串、R013；不做隐式转换。
+- `int(string)` / `double(string)` 使用显式、严格的数值字符串解析；两端允许 ASCII 空格/水平制表符/`\r`，不做隐式转换。
+- `int` 只接受十进制整数；格式非法 R013，int64 越界 R005，支持 `INT64_MIN`。
+- `double` 复用 §2.6 的数值语法和有限/下溢检查；格式或范围非法 R013。
+- 新增 `R013`；`unit_eval` 覆盖成功与错误，`unit_reference` 覆盖 `read()` → 数字及非法输入；`lush_tests` 共 223 个测试。
+
+M8–M11 规划摘要（未实现，详见 `docs/steps.md`）：
+
 - M8a：`def`/`return`、`->`、`point2`/`point3`、`int`/`double`/`bool`/`string`/`list`/`point`/`any`/`callable` 注解；只允许顶层 `def`，执行前收集并提升；S010/S011/S012。
 - M8b：`UserFunction` 持有 AST + Source；SourceId 只作诊断/查询；common callable namespace；语句位置 `f 1 2`、表达式 `f(1,2)`；无闭包；参数不接受 list→point；返回只允许 int→double；值函数漏 return 为 R014；递归上限 1024 / R015。
 - M8c：用户函数签名进入 completion；返回类型驱动成员补全；def/类型名补全；void 不作为值。

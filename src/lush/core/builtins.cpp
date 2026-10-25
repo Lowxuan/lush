@@ -3,11 +3,15 @@
 #include "lush/core/format.h"
 #include "lush/core/utf8.h"
 
+#include <charconv>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <string>
+#include <string_view>
+#include <system_error>
 #include <utility>
 
 namespace lush::core {
@@ -155,6 +159,96 @@ bool numericValue(const Value& value, double& out) {
     return false;
 }
 
+bool isNumericWhitespace(char value) noexcept {
+    return value == ' ' || value == '\t' || value == '\r';
+}
+
+std::string_view trimNumericText(std::string_view text) noexcept {
+    while (!text.empty() && isNumericWhitespace(text.front())) {
+        text.remove_prefix(1);
+    }
+    while (!text.empty() && isNumericWhitespace(text.back())) {
+        text.remove_suffix(1);
+    }
+    return text;
+}
+
+bool allDecimalDigits(std::string_view text) noexcept {
+    if (text.empty()) {
+        return false;
+    }
+    for (char value : text) {
+        if (value < '0' || value > '9') {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool validDoubleSyntax(std::string_view text) noexcept {
+    std::size_t index = 0;
+    const std::size_t size = text.size();
+
+    const std::size_t integerStart = index;
+    while (index < size && text[index] >= '0' && text[index] <= '9') {
+        ++index;
+    }
+    if (index == integerStart) {
+        return false;
+    }
+
+    if (index < size && text[index] == '.') {
+        ++index;
+        const std::size_t fractionStart = index;
+        while (index < size && text[index] >= '0' && text[index] <= '9') {
+            ++index;
+        }
+        if (index == fractionStart) {
+            return false;
+        }
+    }
+
+    if (index < size && (text[index] == 'e' || text[index] == 'E')) {
+        ++index;
+        if (index < size && (text[index] == '+' || text[index] == '-')) {
+            ++index;
+        }
+        const std::size_t exponentStart = index;
+        while (index < size && text[index] >= '0' && text[index] <= '9') {
+            ++index;
+        }
+        if (index == exponentStart) {
+            return false;
+        }
+    }
+
+    return index == size;
+}
+
+bool hasNonZeroSignificand(std::string_view text) noexcept {
+    for (char value : text) {
+        if (value == 'e' || value == 'E') {
+            break;
+        }
+        if (value >= '1' && value <= '9') {
+            return true;
+        }
+    }
+    return false;
+}
+
+CallResult numericStringError(const CallContext& context) {
+    return CallResult::error(Diagnostic{
+        ErrorCode::R013, argumentSpan(context, 0), "数值字符串格式或范围非法",
+        {}, context.source});
+}
+
+CallResult integerOverflowError(const CallContext& context) {
+    return CallResult::error(Diagnostic{
+        ErrorCode::R005, argumentSpan(context, 0), "整数越界", {},
+        context.source});
+}
+
 bool pointFromList(const ListValue& list, PointValue& out) {
     const std::size_t size = list.size();
     if (size != 2 && size != 3) {
@@ -241,20 +335,64 @@ CallResult callInt(const std::vector<Value>& args, const CallContext& context) {
     if (value.isInt()) {
         return CallResult::ok(value);
     }
-    if (!value.isDouble()) {
-        return typeError(context, 0, "int 或 double", value);
+    if (value.isDouble()) {
+        const double number = value.asDouble();
+        constexpr double limit = 9223372036854775808.0;
+        if (!std::isfinite(number) || number >= limit || number < -limit) {
+            return integerOverflowError(context);
+        }
+        return CallResult::ok(Value::makeInt(
+            static_cast<std::int64_t>(std::trunc(number))));
+    }
+    if (!value.isString()) {
+        return typeError(context, 0, "int、double 或 string", value);
     }
 
-    const double number = value.asDouble();
-    constexpr double limit = 9223372036854775808.0;
-    if (!std::isfinite(number) || number >= limit || number < -limit) {
-        return CallResult::error(Diagnostic{
-            ErrorCode::R005, argumentSpan(context, 0), "整数越界", {},
-            context.source});
+    std::string_view text = trimNumericText(value.asString());
+    if (text.empty()) {
+        return numericStringError(context);
     }
 
-    return CallResult::ok(Value::makeInt(
-        static_cast<std::int64_t>(std::trunc(number))));
+    bool negative = false;
+    if (text.front() == '+' || text.front() == '-') {
+        negative = text.front() == '-';
+        text.remove_prefix(1);
+    }
+    if (!allDecimalDigits(text)) {
+        return numericStringError(context);
+    }
+
+    std::uint64_t magnitude = 0;
+    const auto parsed =
+        std::from_chars(text.data(), text.data() + text.size(), magnitude);
+    if (parsed.ec == std::errc::result_out_of_range) {
+        return integerOverflowError(context);
+    }
+    if (parsed.ec != std::errc{} ||
+        parsed.ptr != text.data() + text.size()) {
+        return numericStringError(context);
+    }
+
+    constexpr std::uint64_t kInt64MinMagnitude = std::uint64_t{1} << 63;
+    if (magnitude > kInt64MinMagnitude) {
+        return integerOverflowError(context);
+    }
+
+    if (negative) {
+        if (magnitude == kInt64MinMagnitude) {
+            return CallResult::ok(
+                Value::makeInt(std::numeric_limits<std::int64_t>::min()));
+        }
+        return CallResult::ok(Value::makeInt(
+            -static_cast<std::int64_t>(magnitude)));
+    }
+
+    if (magnitude > static_cast<std::uint64_t>(
+                        std::numeric_limits<std::int64_t>::max())) {
+        return integerOverflowError(context);
+    }
+    return CallResult::ok(
+        Value::makeInt(static_cast<std::int64_t>(magnitude)));
 }
 
 CallResult callDouble(const std::vector<Value>& args,
@@ -267,7 +405,39 @@ CallResult callDouble(const std::vector<Value>& args,
         return CallResult::ok(
             Value::makeDouble(static_cast<double>(value.asInt())));
     }
-    return typeError(context, 0, "int 或 double", value);
+    if (!value.isString()) {
+        return typeError(context, 0, "int、double 或 string", value);
+    }
+
+    std::string_view text = trimNumericText(value.asString());
+    if (text.empty()) {
+        return numericStringError(context);
+    }
+
+    std::string_view numberText = text;
+    if (numberText.front() == '+') {
+        numberText.remove_prefix(1);
+    } else if (numberText.front() == '-') {
+        numberText.remove_prefix(1);
+    }
+
+    if (!validDoubleSyntax(numberText)) {
+        return numericStringError(context);
+    }
+
+    double number = 0.0;
+    const auto parsed = std::from_chars(
+        numberText.data(), numberText.data() + numberText.size(), number,
+        std::chars_format::general);
+    if (parsed.ec != std::errc{} ||
+        parsed.ptr != numberText.data() + numberText.size() ||
+        !std::isfinite(number) ||
+        (number == 0.0 && hasNonZeroSignificand(numberText))) {
+        return numericStringError(context);
+    }
+
+    return CallResult::ok(Value::makeDouble(
+        text.front() == '-' ? -number : number));
 }
 
 CallResult callBool(const std::vector<Value>& args,

@@ -118,6 +118,29 @@ LUSH_TEST(reference_read_invalid_utf8_is_r010) {
     expectError(result, ErrorCode::R010);
 }
 
+LUSH_TEST(reference_read_to_numeric) {
+    std::istringstream input(" 42 \n1.5\n");
+    StringOutput output;
+    ReferenceHost host(input, output);
+    Env env;
+
+    const DriverResult result = runReferenceScript(
+        host, env, output, "echo int(read())\necho double(read())\n");
+    LUSH_CHECK(result.status == DriverStatus::Done);
+    LUSH_CHECK_EQ(output.text(), std::string("42\n1.5\n"));
+}
+
+LUSH_TEST(reference_read_invalid_numeric_is_r013) {
+    std::istringstream input("abc\n");
+    StringOutput output;
+    ReferenceHost host(input, output);
+    Env env;
+
+    const DriverResult result =
+        runReferenceScript(host, env, output, "echo int(read())\n");
+    expectError(result, ErrorCode::R013);
+}
+
 LUSH_TEST(reference_read_return_type_metadata) {
     ReferenceHost host;
     const auto* signature = host.registry().findSignature("read");

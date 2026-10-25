@@ -438,6 +438,57 @@ LUSH_TEST(eval_int_conversion_edges) {
     }
 }
 
+LUSH_TEST(eval_numeric_string_conversion) {
+    Env env;
+    const auto result = runScript(
+        env,
+        "echo int(\"42\")\n"
+        "echo int(\" +42 \")\n"
+        "echo int(\"-42\")\n"
+        "echo int(\"-0\")\n"
+        "echo int(\"9223372036854775807\")\n"
+        "echo int(\"-9223372036854775808\")\n"
+        "echo double(\"3\")\n"
+        "echo double(\"3.5\")\n"
+        "echo double(\"1e3\")\n"
+        "echo double(\" -1.25 \")\n"
+        "echo double(\"1e-3\")\n");
+    expectOutput(result,
+                 "42\n42\n-42\n0\n9223372036854775807\n"
+                 "-9223372036854775808\n3\n3.5\n1000\n-1.25\n0.001\n");
+}
+
+LUSH_TEST(eval_numeric_string_errors) {
+    const auto expectCode = [](std::string source, ErrorCode code) {
+        Env env;
+        const auto result = runScript(env, std::move(source));
+        expectErrorCode(result, code);
+    };
+
+    expectCode("echo int(\"\")\n", ErrorCode::R013);
+    expectCode("echo int(\"   \")\n", ErrorCode::R013);
+    expectCode("echo int(\"1.0\")\n", ErrorCode::R013);
+    expectCode("echo int(\"0x10\")\n", ErrorCode::R013);
+    expectCode("echo int(\"1 2\")\n", ErrorCode::R013);
+    expectCode("echo int(\"nan\")\n", ErrorCode::R013);
+
+    expectCode("echo double(\"\")\n", ErrorCode::R013);
+    expectCode("echo double(\"1.\")\n", ErrorCode::R013);
+    expectCode("echo double(\".5\")\n", ErrorCode::R013);
+    expectCode("echo double(\"1e\")\n", ErrorCode::R013);
+    expectCode("echo double(\"1e+\")\n", ErrorCode::R013);
+    expectCode("echo double(\"nan\")\n", ErrorCode::R013);
+    expectCode("echo double(\"inf\")\n", ErrorCode::R013);
+    expectCode("echo double(\"0x10\")\n", ErrorCode::R013);
+    expectCode("echo double(\"1e309\")\n", ErrorCode::R013);
+    expectCode("echo double(\"1e-400\")\n", ErrorCode::R013);
+
+    expectCode("echo int(\"9223372036854775808\")\n", ErrorCode::R005);
+    expectCode("echo int(\"-9223372036854775809\")\n", ErrorCode::R005);
+    expectCode("echo int(\"999999999999999999999999\")\n",
+               ErrorCode::R005);
+}
+
 LUSH_TEST(eval_string_conversion) {
     Env env;
     const auto result = runScript(
