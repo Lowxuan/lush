@@ -119,6 +119,7 @@ struct CallContext {
     Span calleeSpan{};
     Span lparenSpan{};
     std::vector<Span> argSpans;
+    SourceId source = kNoSource;
 };
 
 struct CallResult {

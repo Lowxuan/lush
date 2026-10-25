@@ -11,10 +11,10 @@
 | M2 语法 | ✅ 已完成 | AST、Parser、命令参数切词、`Incomplete`、`--dump-ast`；`unit_parser` 全绿 |
 | M3 求值 | ✅ 已完成 | Value、Cell/Env、Eval、Validate、格式化、内建、非命令 golden |
 | M4 命令 | ✅ 已完成 | 命令 spec/registry、参数绑定、参考宿主、命令 golden |
-| M5 会话 / REPL | ⬜ 下一步 | Session、Driver、脚本/REPL CLI |
-| M6 补全 | ⬜ 未开始 | 补全上下文与候选 API |
+| M5 会话 / REPL | ✅ 已完成 | Session、Driver、SourceId/SourceTable、脚本/REPL CLI |
+| M6 补全 | ⬜ 下一步 | 补全上下文与候选 API |
 
-M1–M4 已完成：`lush_tests` 当前 169 个测试，CTest 目标为 `lush_tests`、`lush_version`、`lush_dump_tokens`、`lush_dump_ast`。下一步是 M5（会话与 REPL）；命令系统已经可用，但 CLI 仍未接入脚本/REPL 执行。
+M1–M5 已完成：`lush_tests` 当前 195 个测试，CTest 目标为 `lush_tests`、`lush_version`、`lush_dump_tokens`、`lush_dump_ast`、`lush_eval`。下一步是 M6（补全）。
 
 ---
 
@@ -394,7 +394,7 @@ BoundaryInt @...
 **测试**
 
 - 非命令 golden：G01–G10、G17–G19、G29–G32、G38–G43、G45–G49。
-- 测试接口：不新增 CLI 执行入口；`golden_spec` 直接链接 `lush_core`，组合 `Lexer` → `parse` → `validate` → `evalProgram`，用 `StringOutput` 捕获输出与诊断。`lush file.lush` / `lush -e` 留 M5。
+- 测试接口：M3 阶段不新增 CLI 执行入口；`golden_spec` 直接链接 `lush_core`，组合 `Lexer` → `parse` → `validate` → `evalProgram`，用 `StringOutput` 捕获输出与诊断。`lush file.lush` / `lush -e` 已在 M5 实现。
 - `ref` 专项：G04–G07、G35–G36、G50–G52。
 - 只读成员/索引、越界、除零、溢出、`INT64_MIN`。
 - target-first：`a[i] = i++`、`a[i++] = i`、`a[i++] = i++`、`a[i++] = i++ + i`；目标错误优先；RHS/写入失败时仍提交目标后缀；多重目标后缀；`i = i++` 保持旧值。
@@ -415,7 +415,7 @@ BoundaryInt @...
 **边界**
 
 - 不实现命令注册表、交互会话或 CLI 脚本模式；
-- M3 不新增 CLI 执行入口；`lush file.lush` / `lush -e` 留 M5；
+- M3 阶段不新增 CLI 执行入口；`lush file.lush` / `lush -e` 已在 M5 实现；
 - `echo` 是 core 内建命令，但完整命令系统在 M4；
 - M3 的 `Command` 只支持 `echo`；语句位置的内建函数调用（`int 1`）留 M4。
 
@@ -430,7 +430,7 @@ BoundaryInt @...
 - core：`CallableInfo` / `callableInfo`、`ValidationOptions`、builtin arity 表、语句位置 builtin 调用已落地；`int 1` / `int(1)` 合法，`int 1 2` → S002。
 - command：`spec.h` / `host.h` / `registry` 已落地；`Signature`、`RegistrationResult`、`shared_ptr<const RegisteredCallable>`、`bindStatement` / `bindCall`、R010。
 - reference：`line` / `circle` / `move` 已落地，通过 `core::Output` 写转录。
-- 测试：`unit_command` 已加入；`lush_tests` 共 169 个测试，Debug / Release / Werror / Ninja 全绿。
+- 测试：`unit_command` 已加入；M4 完成时 `lush_tests` 共 169 个测试，Debug / Release / Werror / Ninja 全绿。
 
 **文件**
 
@@ -477,7 +477,7 @@ BoundaryInt @...
   - 宿主 value 函数做最小实现：`returns=value` 的 `CommandSpec` + `FunctionHandler`，表达式位置和语句位置都可用。
 - 构建：
   - 新增 `lush_command`、`lush_reference` 两个 static library；
-  - `lush_tests` 链接两者；CLI 仍只链接 core，M5 再接 driver。
+  - `lush_tests` 链接两者；M5 已把 CLI 接到 driver 与 reference host。
 
 **任务**
 
@@ -523,14 +523,23 @@ BoundaryInt @...
 
 ---
 
-## M5 — 会话与 REPL
+## M5 — 会话与 REPL（已完成）
 
 **目标**：把命令系统接到可暂停/恢复的交互会话和脚本/REPL 驱动上。
+
+**实现结果**
+
+- `command::Session` 只收集必选参数；可选参数默认值由最终 `invokeCommand` 补齐。
+- `driver::Driver` 支持脚本、REPL、`NeedMore`/`NeedInput`/可恢复错误/取消/EOF。
+- `SourceId` / `SourceTable`、`Diagnostic` / `CommandContext` / `CallContext` / `EvalContext` / `HostError` 的 Source 信息已落地；无效 Source 回退默认。
+- CLI 支持 `lush`、`lush file.lush`、`lush -e`；使用 ReferenceHost；提示符、非 TTY、`已取消`、Ctrl+C 和退出码按约定实现。
+- `tests/unit_driver.cpp` 已加入；`lush_tests` 共 195 个测试；CTest 共 5 个目标。Debug / Release / Werror / Ninja 全绿。
 
 **文件**
 
 - `src/lush/command/session.h/.cpp`
 - `src/lush/driver/result.h`
+- `src/lush/driver/source_table.h/.cpp`
 - `src/lush/driver/driver.h/.cpp`
 - `src/cli/repl.h/.cpp`
 - `src/cli/console_sink.h/.cpp`
@@ -538,10 +547,15 @@ BoundaryInt @...
 
 **任务**
 
-- 会话状态：`NEED_INPUT / DONE / ERROR / CANCELLED`。
-- 必选/可选参数、默认值、空输入、取消。
-- 会话输入按 `barePoint | expr` 解析。
-- 脚本模式不进入会话；交互命令缺参报 S006，非交互命令缺参报 S002；参数过多一律 S002。
+- `command::Session` 只做必选参数状态机和参数绑定，不做解析/求值/输出；`NeedInput { prompt, type, dim, index }`，不包含 optional/default/sourceId。
+- 会话只收集必选参数；`argc >= required` 直接执行，可选参数由 `bindStatement`/`invokeCommand` 补默认值。`hint [default]` 属 M6 补全/Tooltip，不是会话提示。
+- Driver 采用 pull 模型：宿主提交文本/Point，Driver 返回状态；会话错误可恢复并继续当前参数。
+- 驱动状态：`Done / NeedMore / NeedInput / Error / Cancelled`；`NeedMore` 是 REPL 语法未完成，`NeedInput` 是会话缺参数，两者分开。
+- 顶层判定：只允许一条非空 `Command`；命令之后允许 `EmptyStmt`；开头的 `;line ...` 不允许进入会话。只有 `single && interactive && argc < required` 才设置 `allowInteractiveSession = true`。
+- 初始命令已提供的参数先全部求值再统一绑定；会话中每次输入只求值并绑定当前必选参数。
+- 会话输入按 `barePoint | expr` 解析，使用单行 `ParseOptions::Script`；纯注释行忽略并重新提示；空白行按空输入；必选空输入取消并返回 R011；会话内不允许多行表达式。
+- SourceId 方案：`SourceId = uint32_t`，0 表示无 Source，有效 ID 从 1 开始；`SourceTable` 由 Driver 内部持有。`Diagnostic`、`CommandContext`、`CallContext`、`EvalContext`、`HostError` 增加 Source 信息；无效 `HostError.source` 回退默认 Source。
+- 直接提交 Point：没有文本 Source；绑定失败仍为 R002/R006，Span 为空，以 `InputOrigin::DirectPoint` 标记来源；`NeedInput` 不增加 sourceId，`CommandContext` 不增加 argOrigins。
 - 复用 M2 的 `IncompleteReason`：
   - `NeedStatement`：`if` / `while` / `for` / `for-in` / `else` 缺 body；
   - `TrailingContinuation`：末尾续行；
@@ -555,13 +569,20 @@ BoundaryInt @...
 - `if (true)` 后 EOF、`for (;;)` 后 EOF 在 Repl 中是 `Incomplete(NeedStatement)`；脚本中是 P002。
 - `a = 1 +`、`a =` 等缺少表达式仍是 P002，不转 `Incomplete`。
 - 脚本模式不续行：EOF 未闭合括号是 P002，`\` 位于 EOF（没有换行）是 L005，`\` + 换行仍是合法续行。
+- REPL EOF：有待完成输入时按 Script 重解析，必要时合成 P002；会话中 EOF 取消会话，不执行命令，不产生 R011；正常 EOF 退出 0；pending EOF 错误退出 1。
+- Ctrl+C：会话中取消会话，pending 取消 pending，空闲清行重提示；Windows/POSIX 实现，不写自动测试；脚本模式不特殊处理。
 - CLI：
-  - `lush` 进入 REPL；
+  - `lush` 进入 REPL，使用 `ReferenceHost` 作为演示宿主；
   - `lush file.lush` 执行脚本；
   - `lush -e "..."` 执行一段源码；
+  - 顺序解析参数，保留 `--dump-tokens` / `--dump-ast`；
+  - 主提示符 `lush> `，续行 ` ...> `，会话提示 `hint: `；
+  - 可选参数提示不在 CLI 实现；
+  - 非 TTY 不打印提示符；
+  - 会话必选空行在 TTY 下只打印 `已取消`，不打印完整 R011 诊断；
   - Windows console 保持 UTF-8。
-- 错误策略：解析/校验首错中止；会话错误停留当前参数；取消结束会话。
-- 待定边界：按 §7.4，`required = 0` 的 interactive 命令不会进入会话，因此只有可选参数的 interactive 命令永远不会提示可选参数；M5 再确认是否调整。
+- 错误策略：解析/校验首错中止；会话错误停留当前参数；取消结束会话；REPL 普通行错误不累计退出码。
+- interactive + variadic 允许注册，但会话只补必选固定参数，变参不参与会话补齐，可以为 0 个。
 
 **测试**
 
@@ -572,9 +593,16 @@ BoundaryInt @...
 - 未闭合块内空白行继续等待；
 - 注释行不取消待完成输入；
 - `if (a);` / `while (a);` / `for (;;);` 空 body；
-- 取消；
+- 顶层单条判定：结尾 `EmptyStmt` 允许，开头 `;` 拒绝；
+- 取消、R011、会话 EOF、pending EOF；
 - 脚本 vs REPL 的 S006/S002 差异；
-- 会话中输入 `0,0`；
+- 会话中输入 `0,0`、注释行、空输入；
+- 可选参数不进入会话、执行时取默认值；
+- interactive 变参不补变参；
+- SourceId：初始命令 + 会话输入混合 Source、`HostError.source`、无效 Source 回退；
+- 直接 Point：`InputOrigin::DirectPoint`、无文本 Span；
+- CLI：`lush file`、`lush -e`、非 TTY 无提示；
+- Ctrl+C 不写自动测试，只做手工/编译路径检查；
 - `unit_driver` 全绿。
 
 **完成标准**
@@ -582,7 +610,9 @@ BoundaryInt @...
 - CLI 可用；
 - G22 通过；
 - 脚本模式交互命令缺参报 S006，非交互命令缺参报 S002；
-- REPL 未闭合输入能继续读取。
+- REPL 未闭合输入能继续读取；
+- SourceId、R011、直接 Point Origin 和 EOF 有测试；Ctrl+C 已实现，按约定不做自动测试；
+- 不实现 M6 补全。
 
 ---
 

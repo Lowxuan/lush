@@ -43,6 +43,16 @@ struct RegistrationResult {
     }
 };
 
+// Shared parameter conversion used by full command binding and by interactive
+// sessions.  The caller supplies the span/source for a diagnostic.
+struct ParamBindResult {
+    std::optional<core::Value> value;
+    std::optional<core::ErrorCode> error;
+    std::string message;
+};
+
+ParamBindResult bindParam(const ParamSpec& param, const core::Value& value);
+
 struct RegisteredCallable {
     Signature signature;
     CommandHandler commandHandler;

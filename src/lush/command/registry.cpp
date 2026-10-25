@@ -197,25 +197,31 @@ struct BindResult {
 };
 
 core::Diagnostic makeDiagnostic(core::ErrorCode code, core::Span span,
-                                std::string message) {
-    return core::Diagnostic{code, span, std::move(message), {}};
+                                std::string message,
+                                core::SourceId source = core::kNoSource) {
+    return core::Diagnostic{code, span, std::move(message), {}, source};
 }
 
 core::Diagnostic makeHostDiagnostic(const HostError& error,
-                                    core::Span defaultSpan) {
+                                    core::Span defaultSpan,
+                                    core::SourceId defaultSource) {
     std::string message = error.message;
     if (message.empty()) {
         message = "命令执行失败";
     }
+    const core::SourceId source =
+        error.source != core::kNoSource ? error.source : defaultSource;
     return makeDiagnostic(core::ErrorCode::R010,
                           error.span.value_or(defaultSpan),
-                          std::move(message));
+                          std::move(message), source);
 }
 
 BindResult bindArguments(const Signature& signature,
                          const std::vector<core::Value>& args,
                          const std::vector<core::Span>& argSpans,
-                         core::Span aritySpan, bool callSite) {
+                         const std::vector<core::SourceId>& argSources,
+                         core::Span aritySpan, core::SourceId aritySource,
+                         bool callSite) {
     BindResult result;
     const std::size_t argc = args.size();
 
@@ -228,13 +234,13 @@ BindResult bindArguments(const Signature& signature,
     };
 
     if (argc < signature.required) {
-        result.diagnostic =
-            makeDiagnostic(arityCode(), aritySpan, "参数个数不符");
+        result.diagnostic = makeDiagnostic(arityCode(), aritySpan,
+                                           "参数个数不符", aritySource);
         return result;
     }
     if (!signature.variadic && argc > signature.maxFixed) {
-        result.diagnostic =
-            makeDiagnostic(arityCode(), aritySpan, "参数个数不符");
+        result.diagnostic = makeDiagnostic(arityCode(), aritySpan,
+                                           "参数个数不符", aritySource);
         return result;
     }
 
@@ -248,9 +254,12 @@ BindResult bindArguments(const Signature& signature,
             if (!convertedValue.value) {
                 const core::Span span =
                     index < argSpans.size() ? argSpans[index] : aritySpan;
+                const core::SourceId source =
+                    index < argSources.size() ? argSources[index]
+                                              : aritySource;
                 result.diagnostic = makeDiagnostic(
                     convertedValue.error.value_or(core::ErrorCode::R002),
-                    span, std::move(convertedValue.message));
+                    span, std::move(convertedValue.message), source);
                 return result;
             }
             result.values.push_back(std::move(*convertedValue.value));
@@ -258,8 +267,8 @@ BindResult bindArguments(const Signature& signature,
         }
 
         if (!param.optional || !param.defaultValue) {
-            result.diagnostic =
-                makeDiagnostic(arityCode(), aritySpan, "参数个数不符");
+            result.diagnostic = makeDiagnostic(arityCode(), aritySpan,
+                                               "参数个数不符", aritySource);
             return result;
         }
         result.values.push_back(*param.defaultValue);
@@ -272,9 +281,12 @@ BindResult bindArguments(const Signature& signature,
             if (!convertedValue.value) {
                 const core::Span span =
                     index < argSpans.size() ? argSpans[index] : aritySpan;
+                const core::SourceId source =
+                    index < argSources.size() ? argSources[index]
+                                              : aritySource;
                 result.diagnostic = makeDiagnostic(
                     convertedValue.error.value_or(core::ErrorCode::R002),
-                    span, std::move(convertedValue.message));
+                    span, std::move(convertedValue.message), source);
                 return result;
             }
             result.values.push_back(std::move(*convertedValue.value));
@@ -287,15 +299,19 @@ BindResult bindArguments(const Signature& signature,
 BindResult bindStatement(const Signature& signature,
                          const std::vector<core::Value>& args,
                          const std::vector<core::Span>& argSpans,
-                         core::Span nameSpan) {
-    return bindArguments(signature, args, argSpans, nameSpan, false);
+                         const std::vector<core::SourceId>& argSources,
+                         core::Span nameSpan, core::SourceId nameSource) {
+    return bindArguments(signature, args, argSpans, argSources, nameSpan,
+                         nameSource, false);
 }
 
 BindResult bindCall(const Signature& signature,
                     const std::vector<core::Value>& args,
                     const std::vector<core::Span>& argSpans,
-                    core::Span lparenSpan) {
-    return bindArguments(signature, args, argSpans, lparenSpan, true);
+                    core::Span lparenSpan, core::SourceId source) {
+    const std::vector<core::SourceId> argSources(argSpans.size(), source);
+    return bindArguments(signature, args, argSpans, argSources, lparenSpan,
+                         source, true);
 }
 
 class HostCallable final : public core::Callable {
@@ -312,30 +328,33 @@ public:
                           const core::CallContext& context) const override {
         const BindResult bound =
             bindCall(registered_->signature, args, context.argSpans,
-                     context.lparenSpan);
+                     context.lparenSpan, context.source);
         if (bound.diagnostic) {
             return core::CallResult::error(*bound.diagnostic);
         }
         if (!registered_->functionHandler) {
             return core::CallResult::error(
                 makeDiagnostic(core::ErrorCode::R010, context.calleeSpan,
-                               "宿主函数没有处理器"));
+                               "宿主函数没有处理器", context.source));
         }
 
         core::CommandContext commandContext;
         commandContext.nameSpan = context.calleeSpan;
+        commandContext.nameSource = context.source;
         commandContext.argSpans = context.argSpans;
+        commandContext.argSources.assign(context.argSpans.size(),
+                                         context.source);
 
         CommandResult result =
             registered_->functionHandler(bound.values, commandContext);
         if (result.error) {
-            return core::CallResult::error(
-                makeHostDiagnostic(*result.error, context.calleeSpan));
+            return core::CallResult::error(makeHostDiagnostic(
+                *result.error, context.calleeSpan, context.source));
         }
         if (!result.value) {
             return core::CallResult::error(
                 makeDiagnostic(core::ErrorCode::R010, context.calleeSpan,
-                               "宿主函数没有返回值"));
+                               "宿主函数没有返回值", context.source));
         }
         return core::CallResult::ok(std::move(*result.value));
     }
@@ -353,6 +372,12 @@ RegistrationResult registrationError(RegistrationError code,
 }
 
 } // namespace
+
+ParamBindResult bindParam(const ParamSpec& param, const core::Value& value) {
+    ConvertResult converted = convertParam(param, value);
+    return ParamBindResult{std::move(converted.value), converted.error,
+                           std::move(converted.message)};
+}
 
 RegistrationResult Registry::registerCommand(
     CommandSpec spec, CommandHandler handler) {
@@ -608,7 +633,8 @@ std::optional<core::Diagnostic> Registry::invokeCommand(
 
     const BindResult bound =
         bindStatement(registered->signature, args, context.argSpans,
-                      context.nameSpan);
+                      context.argSources, context.nameSpan,
+                      context.nameSource);
     if (bound.diagnostic) {
         return bound.diagnostic;
     }
@@ -616,28 +642,31 @@ std::optional<core::Diagnostic> Registry::invokeCommand(
     if (registered->signature.returnsValue) {
         if (!registered->functionHandler) {
             return makeDiagnostic(core::ErrorCode::R010, context.nameSpan,
-                                  "宿主函数没有处理器");
+                                  "宿主函数没有处理器", context.nameSource);
         }
         CommandResult result =
             registered->functionHandler(bound.values, context);
         if (result.error) {
-            return makeHostDiagnostic(*result.error, context.nameSpan);
+            return makeHostDiagnostic(*result.error, context.nameSpan,
+                                      context.nameSource);
         }
         if (!result.value) {
             return makeDiagnostic(core::ErrorCode::R010, context.nameSpan,
-                                  "宿主函数没有返回值");
+                                  "宿主函数没有返回值",
+                                  context.nameSource);
         }
         return std::nullopt;
     }
 
     if (!registered->commandHandler) {
         return makeDiagnostic(core::ErrorCode::R010, context.nameSpan,
-                              "宿主命令没有处理器");
+                              "宿主命令没有处理器", context.nameSource);
     }
     CommandResult result =
         registered->commandHandler(bound.values, context, output);
     if (result.error) {
-        return makeHostDiagnostic(*result.error, context.nameSpan);
+        return makeHostDiagnostic(*result.error, context.nameSpan,
+                                  context.nameSource);
     }
     return std::nullopt;
 }

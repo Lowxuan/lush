@@ -21,10 +21,19 @@ add_library(lush::core ALIAS lush_core)
 
 add_library(lush_command STATIC
     lush/command/registry.cpp
+    lush/command/session.cpp
 )
 target_link_libraries(lush_command PUBLIC lush::core)
 target_compile_features(lush_command PUBLIC cxx_std_20)
 add_library(lush::command ALIAS lush_command)
+
+add_library(lush_driver STATIC
+    lush/driver/source_table.cpp
+    lush/driver/driver.cpp
+)
+target_link_libraries(lush_driver PUBLIC lush::command)
+target_compile_features(lush_driver PUBLIC cxx_std_20)
+add_library(lush::driver ALIAS lush_driver)
 
 add_library(lush_reference STATIC
     reference/reference_host.cpp
@@ -36,6 +45,8 @@ add_library(lush::reference ALIAS lush_reference)
 if(LUSH_BUILD_CLI)
     add_executable(lush
         cli/main.cpp
+        cli/repl.cpp
+        cli/console_sink.cpp
     )
-    target_link_libraries(lush PRIVATE lush::core)
+    target_link_libraries(lush PRIVATE lush::driver lush::reference)
 endif()

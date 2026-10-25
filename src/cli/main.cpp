@@ -1,7 +1,11 @@
-#include "lush/lush.h"
-
+#include "cli/console_sink.h"
+#include "cli/repl.h"
+#include "lush/command/registry.h"
 #include "lush/core/ast.h"
 #include "lush/core/parser.h"
+#include "lush/driver/driver.h"
+#include "lush/lush.h"
+#include "reference/reference_host.h"
 
 #include <fstream>
 #include <iostream>
@@ -34,7 +38,9 @@ void printVersion() {
 
 void printHelp() {
     std::cout
-        << "usage: lush [options]\n"
+        << "usage: lush\n"
+        << "       lush <file>\n"
+        << "       lush -e \"<source>\"\n"
         << "       lush --dump-tokens <file>\n"
         << "       lush --dump-tokens -e \"<source>\"\n"
         << "       lush --dump-ast <file>\n"
@@ -43,6 +49,7 @@ void printHelp() {
         << "options:\n"
         << "  -v, --version        显示版本\n"
         << "  -h, --help           显示帮助\n"
+        << "  -e ...               执行一段源码\n"
         << "  --dump-tokens <file> 输出文件中的 token 流\n"
         << "  --dump-tokens -e ... 输出一段源码的 token 流\n"
         << "  --dump-ast <file>    输出文件中的 AST\n"
@@ -158,17 +165,40 @@ int dumpAst(const std::string& text) {
     return 0;
 }
 
-bool hasOption(int argc, char** argv, std::string_view option) {
-    for (int index = 1; index < argc; ++index) {
-        if (std::string_view(argv[index]) == "-e") {
-            ++index;
-            continue;
-        }
-        if (std::string_view(argv[index]) == option) {
-            return true;
-        }
+void printDriverDiagnostic(const lush::driver::DriverResult& result) {
+    if (!result.diagnostic) {
+        return;
     }
-    return false;
+    if (result.source) {
+        std::cerr << lush::core::formatDiagnostic(*result.source,
+                                                  *result.diagnostic);
+        return;
+    }
+    std::cerr << "error[" << lush::core::errorCodeName(result.diagnostic->code)
+              << "]: " << result.diagnostic->message << '\n';
+}
+
+int runSource(std::string text) {
+    lush::core::Env env;
+    lush::reference::ReferenceHost host;
+    lush::cli::ConsoleSink sink;
+    lush::driver::Driver driver(env, host.registry(), sink);
+
+    const lush::driver::DriverResult result = driver.runScript(std::move(text));
+    if (result.status == lush::driver::DriverStatus::Error) {
+        printDriverDiagnostic(result);
+        return 1;
+    }
+    return 0;
+}
+
+int runFile(const std::string& path) {
+    std::string text;
+    if (!readFile(path, text)) {
+        std::cerr << "cannot read file: " << path << '\n';
+        return 2;
+    }
+    return runSource(std::move(text));
 }
 
 } // namespace
@@ -176,20 +206,44 @@ bool hasOption(int argc, char** argv, std::string_view option) {
 int main(int argc, char** argv) {
     setupConsole();
 
-    const bool wantsDumpTokens = hasOption(argc, argv, "--dump-tokens");
-    const bool wantsDumpAst = hasOption(argc, argv, "--dump-ast");
-    if (wantsDumpTokens && wantsDumpAst) {
+    if (argc == 1) {
+        lush::core::Env env;
+        lush::reference::ReferenceHost host;
+        lush::cli::ConsoleSink sink;
+        lush::driver::Driver driver(env, host.registry(), sink);
+        return lush::cli::runRepl(driver);
+    }
+
+    const std::string_view arg = argv[1];
+
+    if (argc >= 3 &&
+        ((arg == "--dump-tokens" &&
+          std::string_view(argv[2]) == "--dump-ast") ||
+         (arg == "--dump-ast" &&
+          std::string_view(argv[2]) == "--dump-tokens"))) {
         std::cerr << "--dump-tokens and --dump-ast are mutually exclusive\n";
         return 2;
     }
 
-    if (argc == 1) {
-        std::cout << "lush " << lush::version()
-                  << " (M2 parser; REPL not implemented yet)\n";
+    if (arg == "--version" || arg == "-v") {
+        if (argc != 2) {
+            std::cerr << "too many arguments\n";
+            return 2;
+        }
+        printVersion();
         return 0;
     }
 
-    if (std::string_view(argv[1]) == "--dump-tokens") {
+    if (arg == "--help" || arg == "-h") {
+        if (argc != 2) {
+            std::cerr << "too many arguments\n";
+            return 2;
+        }
+        printHelp();
+        return 0;
+    }
+
+    if (arg == "--dump-tokens") {
         if (argc == 3 && std::string_view(argv[2]) != "-e") {
             std::string text;
             if (!readFile(argv[2], text)) {
@@ -208,7 +262,7 @@ int main(int argc, char** argv) {
         return 2;
     }
 
-    if (std::string_view(argv[1]) == "--dump-ast") {
+    if (arg == "--dump-ast") {
         if (argc == 3 && std::string_view(argv[2]) != "-e") {
             std::string text;
             if (!readFile(argv[2], text)) {
@@ -227,23 +281,23 @@ int main(int argc, char** argv) {
         return 2;
     }
 
+    if (arg == "-e") {
+        if (argc != 3) {
+            std::cerr << "usage: lush -e \"<source>\"\n";
+            return 2;
+        }
+        return runSource(std::string(argv[2]));
+    }
+
     if (argc > 2) {
         std::cerr << "too many arguments\n";
         return 2;
     }
 
-    const std::string_view arg = argv[1];
-
-    if (arg == "--version" || arg == "-v") {
-        printVersion();
-        return 0;
+    if (!arg.empty() && arg.front() == '-') {
+        std::cerr << "unknown option: " << arg << '\n';
+        return 2;
     }
 
-    if (arg == "--help" || arg == "-h") {
-        printHelp();
-        return 0;
-    }
-
-    std::cerr << "unknown option: " << arg << '\n';
-    return 2;
+    return runFile(std::string(arg));
 }

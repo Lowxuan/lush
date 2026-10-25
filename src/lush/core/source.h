@@ -1,11 +1,17 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <string_view>
 #include <vector>
 
 namespace lush::core {
+
+// Source identity used by command/session host APIs.  0 means "no source";
+// valid ids are allocated by the driver's SourceTable and start at 1.
+using SourceId = std::uint32_t;
+inline constexpr SourceId kNoSource = 0;
 
 struct Span {
     std::size_t start = 0;

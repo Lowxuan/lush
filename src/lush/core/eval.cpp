@@ -243,6 +243,10 @@ class Evaluator {
 public:
     explicit Evaluator(EvalContext& context) : context_(context) {}
 
+    EvalExprResult evaluateExpression(const Expr& expression) {
+        return evalExpr(expression);
+    }
+
     EvalFlowResult evalNode(const Node& node) {
         switch (node.kind()) {
         case NodeKind::Program: {
@@ -894,6 +898,7 @@ private:
         context.calleeSpan = call.callee->span;
         context.lparenSpan = call.lparenSpan;
         context.argSpans.reserve(call.args.size());
+        context.source = context_.source;
 
         for (const ExprPtr& argument : call.args) {
             EvalExprResult value = evalExpr(*argument);
@@ -1210,7 +1215,9 @@ private:
         arguments.reserve(command.args.size());
         CommandContext context;
         context.nameSpan = command.name.span;
+        context.nameSource = context_.source;
         context.argSpans.reserve(command.args.size());
+        context.argSources.reserve(command.args.size());
 
         for (const ExprPtr& argument : command.args) {
             EvalExprResult value = evalExpr(*argument);
@@ -1219,6 +1226,7 @@ private:
             }
             arguments.push_back(std::move(*value.value));
             context.argSpans.push_back(argument->span);
+            context.argSources.push_back(context_.source);
         }
 
         std::optional<Diagnostic> diagnostic = context_.names.invokeCommand(
@@ -1666,6 +1674,23 @@ EvalResult evalProgram(const Program& program, EvalContext& context) {
             "break/continue 不在循环内")};
     }
     return EvalResult{};
+}
+
+EvalExpressionResult evalExpression(const Expr& expression,
+                                    EvalContext& context) {
+    Evaluator evaluator(context);
+    EvalExprResult result = evaluator.evaluateExpression(expression);
+    if (result.diagnostic) {
+        return EvalExpressionResult{std::nullopt,
+                                    std::move(result.diagnostic)};
+    }
+    if (!result.value) {
+        return EvalExpressionResult{
+            std::nullopt,
+            makeDiagnostic(ErrorCode::R002, expression.span,
+                           "表达式没有返回值")};
+    }
+    return EvalExpressionResult{std::move(result.value), std::nullopt};
 }
 
 } // namespace lush::core

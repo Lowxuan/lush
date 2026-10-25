@@ -12,7 +12,9 @@ namespace lush::core {
 
 struct CommandContext {
     Span nameSpan{};
+    SourceId nameSource = kNoSource;
     std::vector<Span> argSpans;
+    std::vector<SourceId> argSources;
 };
 
 // The language-level shape of a registered callable.  This deliberately does

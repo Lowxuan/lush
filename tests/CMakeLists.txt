@@ -7,10 +7,11 @@ add_executable(lush_tests
     unit_ref.cpp
     unit_eval.cpp
     unit_command.cpp
+    unit_driver.cpp
     golden_spec.cpp
 )
 
-target_link_libraries(lush_tests PRIVATE lush::reference)
+target_link_libraries(lush_tests PRIVATE lush::driver lush::reference)
 target_include_directories(lush_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 
 add_test(NAME lush_tests COMMAND $<TARGET_FILE:lush_tests>)
@@ -33,5 +34,12 @@ if(TARGET lush)
     )
     set_tests_properties(lush_dump_ast PROPERTIES
         PASS_REGULAR_EXPRESSION "Program"
+    )
+
+    add_test(NAME lush_eval
+        COMMAND $<TARGET_FILE:lush> -e "echo 1"
+    )
+    set_tests_properties(lush_eval PROPERTIES
+        PASS_REGULAR_EXPRESSION "1"
     )
 endif()

@@ -15,6 +15,7 @@ namespace lush::command {
 struct HostError {
     std::string message;
     std::optional<core::Span> span;
+    core::SourceId source = core::kNoSource;
 };
 
 struct CommandResult {
@@ -31,10 +32,12 @@ struct CommandResult {
         return CommandResult{};
     }
 
-    static CommandResult failure(std::string message,
-                                 std::optional<core::Span> span = std::nullopt) {
+    static CommandResult failure(
+        std::string message,
+        std::optional<core::Span> span = std::nullopt,
+        core::SourceId source = core::kNoSource) {
         CommandResult result;
-        result.error = HostError{std::move(message), span};
+        result.error = HostError{std::move(message), span, source};
         return result;
     }
 };

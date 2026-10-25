@@ -23,4 +23,7 @@ struct ValidationResult {
 ValidationResult validate(const Program& program, const NameCatalog& names,
                           ValidationOptions options = {});
 
+ValidationResult validateExpression(const Expr& expression,
+                                    const NameCatalog& names);
+
 } // namespace lush::core

@@ -19,6 +19,11 @@ public:
         return ValidationResult{std::move(error_)};
     }
 
+    ValidationResult runExpression(const Expr& expression) {
+        validateExpr(expression);
+        return ValidationResult{std::move(error_)};
+    }
+
 private:
     void fail(ErrorCode code, Span span, std::string message) {
         if (error_) {
@@ -307,6 +312,12 @@ ValidationResult validate(const Program& program, const NameCatalog& names,
                           ValidationOptions options) {
     Validator validator(names, options);
     return validator.run(program);
+}
+
+ValidationResult validateExpression(const Expr& expression,
+                                    const NameCatalog& names) {
+    Validator validator(names, ValidationOptions{});
+    return validator.runExpression(expression);
 }
 
 } // namespace lush::core

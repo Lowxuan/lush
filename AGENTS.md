@@ -4,7 +4,7 @@
 
 ## 先读什么
 
-- **语义唯一来源：`docs/spec.md`（v0.3.5）。** 代码与 spec 冲突时以 spec 为准；要改语义，先改 spec 和 golden，再改代码。
+- **语义唯一来源：`docs/spec.md`（v0.3.6）。** 代码与 spec 冲突时以 spec 为准；要改语义，先改 spec 和 golden，再改代码。
 - `docs/steps.md`：M1–M6 开发里程碑、文件、任务、测试与完成标准。
 - `README.md`：构建入口。
 - `start.md` / `teaching.md`：历史需求与选型讨论，**不是规范**。`teaching.md` 里推荐的 peglib / ANTLR / Lua 等均未采用；本项目使用手写递归下降 + 优先级爬升，零第三方依赖。
@@ -14,14 +14,15 @@ spec 很长（约 2230 行），按需读：§0.1 决策表、§2–§8 语义�
 
 ## 当前状态（不要假设功能已存在）
 
-- **M0、M1、M2、M3、M4 已完成**：
+- **M0、M1、M2、M3、M4、M5 已完成**：
   - `lush_core` 已实现 `utf8`、`source`、`diagnostic`、`token`、`lexer`、`version`、`ast`、`parser`、`value`、`cell`、`validate`、`eval`、`format`、`builtins`、`checked`、`output`；
-  - CLI 支持 `--version`、`--help`、`--dump-tokens <file>`、`--dump-tokens -e "<source>"`、`--dump-ast <file>`、`--dump-ast -e "<source>"`；
-  - 仍无 REPL、无脚本执行模式；`-e` 只用于 `--dump-tokens` / `--dump-ast`；普通文件路径仍报 `unknown option` 并退出 2。
-- M4 已完成：`lush_command` / `lush_reference` 已实现命令注册、参数绑定、宿主 API 和 `line` / `circle` / `move`；`int 1` 等语句位置 builtin 调用已开放。会话 / 补全仍未实现，`lush file.lush` / `lush -e` 留 M5。
-- M2 的 AST/Parser 规则、M3 的求值规则和 M4 的命令规则已在 `docs/spec.md` 0.3.5 和 `docs/steps.md` 实现并测试。下一步是 **M5（会话与 REPL）**；不要提前写 M6 的补全。
-- spec §15 的 G01–G52 中，M3 的非命令 golden 已在 `tests/golden_spec.cpp` 落地；命令 golden 已在 `tests/unit_command.cpp` 落地；会话 golden 待 M5，不要声称全部通过。
-- 当前 `lush_tests` 有 169 个测试；CTest 有四个目标：`lush_tests`、`lush_version`、`lush_dump_tokens`、`lush_dump_ast`。
+  - CLI 支持 `--version`、`--help`、`--dump-tokens <file>`、`--dump-tokens -e "<source>"`、`--dump-ast <file>`、`--dump-ast -e "<source>"`、`lush` REPL、`lush <file>`、`lush -e "<source>"`；
+  - 补全（M6）尚未实现。
+- M4 已完成：`lush_command` / `lush_reference` 已实现命令注册、参数绑定、宿主 API 和 `line` / `circle` / `move`；`int 1` 等语句位置 builtin 调用已开放。
+- M5 已完成：`command::Session`、`driver::Driver`、`driver::SourceTable`、REPL/脚本 CLI、SourceId/Source 信息和 ReferenceHost 演示宿主已接入。
+- M2 的 AST/Parser 规则、M3 的求值规则、M4 的命令规则和 M5 的会话规则已在 `docs/spec.md` 0.3.6 和 `docs/steps.md` 实现并测试。下一步是 **M6（补全）**；不要提前实现未定的补全语义。
+- spec §15 的 G01–G52 中，M3 的非命令 golden 已在 `tests/golden_spec.cpp` 落地；命令 golden 已在 `tests/unit_command.cpp` 落地；会话/驱动测试在 `tests/unit_driver.cpp` 落地。
+- 当前 `lush_tests` 有 195 个测试；CTest 有五个目标：`lush_tests`、`lush_version`、`lush_dump_tokens`、`lush_dump_ast`、`lush_eval`。
 
 M1 词法实现约定（已完成）：
 
@@ -55,8 +56,25 @@ M4 命令实现约定（已完成）：
 - `Registry` 存 `shared_ptr<const RegisteredCallable>`；value 函数的 `Callable` adapter 共享所有权，`t = f` 后 registry 销毁仍可调用。
 - `bindStatement`（arity S002 在命令名）与 `bindCall`（arity R002 在 `(`）分开；类型 R002、point R006 在违规参数；一次调用先从左到右全部求值，再统一绑定。
 - 宿主复用 `core::Output`；void 命令用 `CommandHandler`（收绑定后的 `vector<Value>` + `CommandContext` + `Output&`），value 函数用纯 `FunctionHandler`（不接收 `Output`）；`CommandResult { optional<Value> value; optional<HostError> error; }`，`HostError { message; optional<Span> span; }`；宿主失败统一 R010，默认 Span 命令名/callee。
-- 新增 `lush_command` / `lush_reference` 两个 static library；`lush_tests` 链接两者；CLI 仍只链接 core。
-- M4 已更新 M3 的 `int 1` / `int(1)` S001 断言；命令测试在 `tests/unit_command.cpp`，`lush_tests` 共 169 个测试。
+- 新增 `lush_command` / `lush_reference` 两个 static library；`lush_tests` 链接两者；M4 阶段 CLI 只链接 core，M5 已接入 driver/reference。
+- M4 已更新 M3 的 `int 1` / `int(1)` S001 断言；命令测试在 `tests/unit_command.cpp`，M4 完成时 `lush_tests` 共 169 个测试。
+
+M5 会话 / REPL 约定（已完成）：
+
+- 会话只收集必选参数；`argc >= required` 直接执行，可选参数由 `bindStatement`/`invokeCommand` 补默认值。`hint [default]` 属 M6 补全/Tooltip，不是会话提示。
+- `command::Session` 只做必选参数状态机和绑定；`NeedInput { prompt, type, dim, index }`，不含 optional/default/sourceId；Session 不解析、不求值、不写输出。
+- `Driver` 采用 pull 模型；状态为 `Done / NeedMore / NeedInput / Error / Cancelled`，`NeedMore` 是 REPL 语法不完整，`NeedInput` 是会话缺参；会话表达式/绑定错误可恢复并继续当前参数。
+- 顶层单条判定：只允许一条非空 `Command`，命令之后允许 `EmptyStmt`，开头 `;line ...` 不允许进入会话；只有 `single && interactive && argc < required` 才允许会话。
+- 初始命令已提供参数先全部求值再统一绑定；会话中每次输入只求值并绑定当前必选参数。
+- 会话输入单行 `barePoint | expr`，使用 `ParseOptions::Script`；纯注释行忽略并重提示；空白行按空输入；必选空输入取消并返回 R011；会话内不允许多行表达式。
+- EOF：pending 输入按 Script 重解析，必要时合成 P002；会话中 EOF 取消；正常 EOF 退出 0，pending EOF 错误退出 1。Ctrl+C：会话取消、pending 取消、空闲清行重提示；Windows/POSIX 实现，不写自动测试。
+- SourceId：`SourceId = uint32_t`，0 表示无 Source，有效 ID 从 1 开始；`SourceTable` 由 Driver 内部持有。`Diagnostic`、`CommandContext`、`CallContext`、`EvalContext`、`HostError` 增加 Source 信息；无效 `HostError.source` 回退默认。
+- 直接提交 Point 无文本 Source；绑定失败仍为 R002/R006，Span 为空，以 `InputOrigin::DirectPoint` 标记来源；`NeedInput` 不加 sourceId，`CommandContext` 不加 argOrigins。
+- 可选参数默认值没有 Span/Source，`argSpans/argSources` 只覆盖实际传入参数；SourceId 只在当前命令/会话处理期间有效。
+- interactive + variadic 允许注册；会话只补必选固定参数，变参不参与会话补齐，可以为 0 个。
+- CLI 使用 `ReferenceHost` 作为演示宿主；依赖增加 `cli → reference`。顺序解析参数，保留 dump 选项；主提示 `lush> `，续行 ` ...> `，会话提示 `hint: `；非 TTY 不打印提示；会话必选空行 TTY 下只打印 `已取消`。
+- 脚本退出码：成功 0，词法/语法/校验/运行时错误 1，用法/读文件失败 2；REPL 普通行错误不累计退出码。
+- M5 已新增 `driver/source_table`、`driver/result`、`driver/driver`、`cli/repl`、`cli/console_sink` 和 `tests/unit_driver`；`lush_tests` 共 195 个测试，CTest 新增 `lush_eval`。
 
 ## 构建 / 测试
 
@@ -81,7 +99,7 @@ ctest --preset vs2022-debug --output-on-failure
   - VS Debug：`build/vs2022/bin/Debug/lush.exe`、`build/vs2022/lib/Debug/lush_core.lib`
   - VS Release：`build/vs2022-release/bin/Release/lush.exe`
   - Ninja：`build/ninja-debug/bin/lush.exe`
-- **测试没有单测过滤参数。** `lush_tests.exe` 忽略命令行参数，总是跑完全部注册测试。CTest 只能按测试名过滤（当前有 `lush_tests`、`lush_version`、`lush_dump_tokens`），例如 `ctest --preset vs2022-debug -R lush_version`。
+- **测试没有单测过滤参数。** `lush_tests.exe` 忽略命令行参数，总是跑完全部注册测试。CTest 只能按测试名过滤（当前有 `lush_tests`、`lush_version`、`lush_dump_tokens`、`lush_dump_ast`、`lush_eval`），例如 `ctest --preset vs2022-debug -R lush_version`。
 - **新增 `.cpp` 必须手动写进 CMake**：`src/CMakeLists.txt` 或 `tests/CMakeLists.txt`；项目不用 `GLOB`，只放文件不会参与构建。
 - **改类布局/虚函数集合/头文件内联实现后必须 clean rebuild**：`ast.h` 加虚函数曾使 Ninja 旧对象与新头文件的 vtable 不一致，运行时 `SIGSEGV at 0x0`。用 `cmake --build --preset <preset> --clean-first`（或删对应 `build/` 目录）重编所有 TU；不要混用不同 build/配置的 `.obj`/`.lib`。一个配置崩、另一个正常时，先 clean 再查源码。
 - `/W4` 目标零警告；`LUSH_WERROR=ON` 可升级为错误，但不要靠关闭警告来通过。
@@ -90,15 +108,15 @@ ctest --preset vs2022-debug --output-on-failure
 
 ```text
 src/lush/core/        只依赖标准库（utf8/source/diagnostic/token/lexer/version）
-src/lush/command/     命令注册、参数绑定、宿主（已实现；会话属 M5）
-src/lush/driver/      脚本 / REPL 执行状态机（未实现）
+src/lush/command/     命令注册、参数绑定、宿主、交互会话（已实现）
+src/lush/driver/      脚本 / REPL 执行状态机、SourceTable（已实现）
 src/lush/completion/  补全（未实现）
-src/reference/        参考宿主 line/circle/move（已实现）
-src/cli/              CLI 前端
+src/reference/        参考宿主 line/circle/move（已实现；M5 CLI 演示宿主）
+src/cli/              CLI 前端（REPL、脚本、-e、dump）
 tests/                单一 lush_tests 可执行文件
 ```
 
-- 依赖方向：`cli → driver → command → core`；`completion` 依赖 `core + command`；`reference` 依赖 `command`。反向依赖不允许。
+- 依赖方向：`cli → driver → command → core`；`cli → reference`（M5 演示宿主）；`completion` 依赖 `core + command`；`reference` 依赖 `command`。反向依赖不允许。
 - 公共 include 根是 `src`，所以写 `#include "lush/core/version.h"`，不要写 `../` 相对路径。
 - `LUSH_VERSION` 由 CMake 以 PUBLIC 宏注入 `lush_core`；`version.h` 里的 fallback 只用于脱离 CMake 的场景。
 

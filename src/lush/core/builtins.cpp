@@ -130,15 +130,17 @@ Span argumentSpan(const CallContext& context, std::size_t index) {
 }
 
 CallResult arityError(const CallContext& context) {
-    return CallResult::error(
-        Diagnostic{ErrorCode::R002, context.lparenSpan, "参数个数不符", {}});
+    return CallResult::error(Diagnostic{
+        ErrorCode::R002, context.lparenSpan, "参数个数不符", {},
+        context.source});
 }
 
 CallResult typeError(const CallContext& context, std::size_t index,
                      const std::string& expected, const Value& actual) {
     return CallResult::error(Diagnostic{
         ErrorCode::R002, argumentSpan(context, index),
-        "期望 " + expected + "，实际为 " + actualTypeName(actual), {}});
+        "期望 " + expected + "，实际为 " + actualTypeName(actual), {},
+        context.source});
 }
 
 bool numericValue(const Value& value, double& out) {
@@ -247,7 +249,8 @@ CallResult callInt(const std::vector<Value>& args, const CallContext& context) {
     constexpr double limit = 9223372036854775808.0;
     if (!std::isfinite(number) || number >= limit || number < -limit) {
         return CallResult::error(Diagnostic{
-            ErrorCode::R005, argumentSpan(context, 0), "整数越界", {}});
+            ErrorCode::R005, argumentSpan(context, 0), "整数越界", {},
+            context.source});
     }
 
     return CallResult::ok(Value::makeInt(
@@ -342,7 +345,7 @@ CallResult callPoint(const std::vector<Value>& args,
                 return CallResult::error(Diagnostic{
                     ErrorCode::R006, argumentSpan(context, 0),
                     "无法构造 point：list 长度必须是 2 或 3，且元素必须是数值",
-                    {}});
+                    {}, context.source});
             }
             return CallResult::ok(Value::makePoint(point));
         }
@@ -404,7 +407,8 @@ CallResult BuiltinCallable::call(const std::vector<Value>& args,
     case BuiltinId::Len: return callLen(args, context);
     }
     return CallResult::error(Diagnostic{
-        ErrorCode::R002, context.calleeSpan, "未知 callable", {}});
+        ErrorCode::R002, context.calleeSpan, "未知 callable", {},
+        context.source});
 }
 
 CallablePtr callableForType(ValueType type) {
@@ -459,13 +463,14 @@ std::optional<Diagnostic> BuiltinCatalog::invokeCommand(
     const std::optional<CallableInfo> info = callableInfo(name);
     if (!info) {
         return Diagnostic{ErrorCode::S001, context.nameSpan,
-                          "未知命令 " + std::string(name), {}};
+                          "未知命令 " + std::string(name), {},
+                          context.nameSource};
     }
 
     if (args.size() < info->required ||
         (!info->variadic && args.size() > info->maxFixed)) {
         return Diagnostic{ErrorCode::S002, context.nameSpan,
-                          "参数个数不符", {}};
+                          "参数个数不符", {}, context.nameSource};
     }
 
     if (asciiEqualsIgnoreCase(name, "echo")) {
@@ -484,13 +489,15 @@ std::optional<Diagnostic> BuiltinCatalog::invokeCommand(
     CallablePtr callable = findCallable(name);
     if (!callable) {
         return Diagnostic{ErrorCode::S001, context.nameSpan,
-                          "未知命令 " + std::string(name), {}};
+                          "未知命令 " + std::string(name), {},
+                          context.nameSource};
     }
 
     CallContext callContext;
     callContext.calleeSpan = context.nameSpan;
     callContext.lparenSpan = context.nameSpan;
     callContext.argSpans = context.argSpans;
+    callContext.source = context.nameSource;
 
     CallResult result = callable->call(args, callContext);
     if (result.diagnostic) {

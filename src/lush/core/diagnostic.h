@@ -50,6 +50,9 @@ struct Diagnostic {
     Span span{};
     std::string message;
     std::string help;
+    // Optional source identity for host/session diagnostics. Core diagnostics
+    // leave this as kNoSource; the driver supplies the active source.
+    SourceId source = kNoSource;
 };
 
 // Formats a diagnostic in the shape defined by docs/spec.md 11.2.
