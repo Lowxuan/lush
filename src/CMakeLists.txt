@@ -27,6 +27,13 @@ target_link_libraries(lush_command PUBLIC lush::core)
 target_compile_features(lush_command PUBLIC cxx_std_20)
 add_library(lush::command ALIAS lush_command)
 
+add_library(lush_completion STATIC
+    lush/completion/completion.cpp
+)
+target_link_libraries(lush_completion PUBLIC lush::command)
+target_compile_features(lush_completion PUBLIC cxx_std_20)
+add_library(lush::completion ALIAS lush_completion)
+
 add_library(lush_driver STATIC
     lush/driver/source_table.cpp
     lush/driver/driver.cpp

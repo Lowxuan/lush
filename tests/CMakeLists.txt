@@ -8,10 +8,12 @@ add_executable(lush_tests
     unit_eval.cpp
     unit_command.cpp
     unit_driver.cpp
+    unit_completion.cpp
+    unit_reference.cpp
     golden_spec.cpp
 )
 
-target_link_libraries(lush_tests PRIVATE lush::driver lush::reference)
+target_link_libraries(lush_tests PRIVATE lush::driver lush::reference lush::completion)
 target_include_directories(lush_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 
 add_test(NAME lush_tests COMMAND $<TARGET_FILE:lush_tests>)

@@ -31,6 +31,8 @@ enum class RegistrationError {
     DefaultTypeMismatch,
     InteractiveValue,
     ReturnKindMismatch,
+    ReturnTypeMismatch,
+    InvalidReturnDim,
     EmptyHandler,
 };
 
@@ -69,6 +71,10 @@ public:
                                        FunctionHandler handler);
 
     const Signature* findSignature(std::string_view name) const;
+
+    // Canonical signatures for completion; aliases remain inside each
+    // Signature and are not duplicated in the returned vector.
+    std::vector<Signature> signatures() const;
 
     std::optional<core::CallableInfo> callableInfo(
         std::string_view name) const override;

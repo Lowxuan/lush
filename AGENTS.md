@@ -14,15 +14,16 @@ spec 很长（约 2230 行），按需读：§0.1 决策表、§2–§8 语义�
 
 ## 当前状态（不要假设功能已存在）
 
-- **M0、M1、M2、M3、M4、M5 已完成**：
+- **M0、M1、M2、M3、M4、M5、M6 已完成**：
   - `lush_core` 已实现 `utf8`、`source`、`diagnostic`、`token`、`lexer`、`version`、`ast`、`parser`、`value`、`cell`、`validate`、`eval`、`format`、`builtins`、`checked`、`output`；
   - CLI 支持 `--version`、`--help`、`--dump-tokens <file>`、`--dump-tokens -e "<source>"`、`--dump-ast <file>`、`--dump-ast -e "<source>"`、`lush` REPL、`lush <file>`、`lush -e "<source>"`；
-  - 补全（M6）设计已定，代码尚未实现。
+  - M6 补全核心与参考宿主 `read` 已实现；CLI Tab 尚未接入。
 - M4 已完成：`lush_command` / `lush_reference` 已实现命令注册、参数绑定、宿主 API 和 `line` / `circle` / `move`；`int 1` 等语句位置 builtin 调用已开放。
 - M5 已完成：`command::Session`、`driver::Driver`、`driver::SourceTable`、REPL/脚本 CLI、SourceId/Source 信息和 ReferenceHost 演示宿主已接入。
-- M2 的 AST/Parser 规则、M3 的求值规则、M4 的命令规则和 M5 的会话规则已在 `docs/spec.md` 和 `docs/steps.md` 实现并测试。M6 设计已在 0.3.7 定稿；下一步是实现 M6，不要提前声称补全已可用。
-- spec §15 的 G01–G52 中，M3 的非命令 golden 已在 `tests/golden_spec.cpp` 落地；命令 golden 已在 `tests/unit_command.cpp` 落地；会话/驱动测试在 `tests/unit_driver.cpp` 落地。
-- 当前 `lush_tests` 有 195 个测试；CTest 有五个目标：`lush_tests`、`lush_version`、`lush_dump_tokens`、`lush_dump_ast`、`lush_eval`。
+- M6 已完成：`lush_completion`、`CompletionRequest/Result`、`returnType` 元数据、参考宿主 `read` 和 `unit_completion` / `unit_reference` 已实现；CLI Tab 仍未接入。
+- M2 的 AST/Parser 规则、M3 的求值规则、M4 的命令规则、M5 的会话规则和 M6 的补全规则已在 `docs/spec.md` 和 `docs/steps.md` 实现并测试。
+- spec §15 的 G01–G52 中，M3 的非命令 golden 已在 `tests/golden_spec.cpp` 落地；命令 golden 已在 `tests/unit_command.cpp` 落地；会话/驱动测试在 `tests/unit_driver.cpp` 落地；补全/`read` 测试在 `tests/unit_completion.cpp` / `tests/unit_reference.cpp` 落地。
+- 当前 `lush_tests` 有 219 个测试；CTest 有五个目标：`lush_tests`、`lush_version`、`lush_dump_tokens`、`lush_dump_ast`、`lush_eval`。
 
 M1 词法实现约定（已完成）：
 
@@ -74,9 +75,9 @@ M5 会话 / REPL 约定（已完成）：
 - interactive + variadic 允许注册；会话只补必选固定参数，变参不参与会话补齐，可以为 0 个。
 - CLI 使用 `ReferenceHost` 作为演示宿主；依赖增加 `cli → reference`。顺序解析参数，保留 dump 选项；主提示 `lush> `，续行 ` ...> `，会话提示 `hint: `；非 TTY 不打印提示；会话必选空行 TTY 下只打印 `已取消`。
 - 脚本退出码：成功 0，词法/语法/校验/运行时错误 1，用法/读文件失败 2；REPL 普通行错误不累计退出码。
-- M5 已新增 `driver/source_table`、`driver/result`、`driver/driver`、`cli/repl`、`cli/console_sink` 和 `tests/unit_driver`；`lush_tests` 共 195 个测试，CTest 新增 `lush_eval`。
+- M5 已新增 `driver/source_table`、`driver/result`、`driver/driver`、`cli/repl`、`cli/console_sink` 和 `tests/unit_driver`；M5 完成时 `lush_tests` 共 195 个测试，CTest 新增 `lush_eval`。
 
-M6 补全设计（已定，代码未开始）：
+M6 补全实现（已完成；CLI Tab 暂缓）：
 
 - 补全是纯计算 API：完整缓冲区 + byte cursor + `Env` + `Registry` + 可选 `NeedInput`；不执行表达式、不调用宿主、不写输出、不产生诊断。
 - 只分析 cursor 前缀；字符串/注释/数字/词法错误返回空候选；cursor 紧接 Identifier 时替换整个当前 token。
@@ -85,7 +86,7 @@ M6 补全设计（已定，代码未开始）：
 - 关键字/命令/函数/类型名大小写不敏感；变量/成员大小写敏感；别名作为独立候选；类型不匹配变量保留并降权。
 - 核心插入纯文本；Point 参数额外提供显式 `(`；不自动追加空格或 `(`。CLI Tab 暂缓。
 - 参考宿主增加 `read(prompt: string = "") -> string`：宿主注入 `std::istream` + `core::Output`；空行合法，去掉尾随 `\r`；EOF/读取失败/无效 UTF-8 → R010；直接读宿主输入，不接入 Driver 的 session/SourceId/Ctrl+C；不引入 HostInputService。
-- M6 需要新增 `lush_completion`、`tests/unit_completion`、`read` 测试，并修改 `command/spec.h`、`host.h`、`registry.*`、`reference_host.*`、CLI 构造和 CMake；现有 195 个测试数在实现后再更新。
+- `lush_completion`、`tests/unit_completion.cpp`、`tests/unit_reference.cpp` 已加入；`command/spec.h` 的 `returnType`、`host.h` 注释、`registry.*` 枚举/校验、`reference_host.*`、CLI 构造和 CMake 已更新；`lush_tests` 共 219 个测试。
 
 ## 构建 / 测试
 
@@ -121,8 +122,8 @@ ctest --preset vs2022-debug --output-on-failure
 src/lush/core/        只依赖标准库（utf8/source/diagnostic/token/lexer/version）
 src/lush/command/     命令注册、参数绑定、宿主、交互会话（已实现）
 src/lush/driver/      脚本 / REPL 执行状态机、SourceTable（已实现）
-src/lush/completion/  补全（M6 设计已定，代码未实现）
-src/reference/        参考宿主 line/circle/move（已实现；M5 CLI 演示宿主；read 在 M6 设计）
+src/lush/completion/  补全核心（已实现；CLI Tab 暂缓）
+src/reference/        参考宿主 line/circle/move/read（已实现；M5/M6 CLI 演示宿主）
 src/cli/              CLI 前端（REPL、脚本、-e、dump）
 tests/                单一 lush_tests 可执行文件
 ```

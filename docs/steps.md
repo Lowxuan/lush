@@ -12,9 +12,9 @@
 | M3 求值 | ✅ 已完成 | Value、Cell/Env、Eval、Validate、格式化、内建、非命令 golden |
 | M4 命令 | ✅ 已完成 | 命令 spec/registry、参数绑定、参考宿主、命令 golden |
 | M5 会话 / REPL | ✅ 已完成 | Session、Driver、SourceId/SourceTable、脚本/REPL CLI |
-| M6 补全 | ⬜ 设计已定，代码未开始 | 补全 API、上下文、类型过滤、`returnType`、参考宿主 `read` |
+| M6 补全 | ✅ 已完成 | 补全核心、类型过滤、`returnType`、参考宿主 `read`；CLI Tab 暂缓 |
 
-M1–M5 已完成；M6 设计已在 `docs/spec.md` 0.3.7 和本文件定稿。`lush_tests` 当前 195 个测试，CTest 目标为 `lush_tests`、`lush_version`、`lush_dump_tokens`、`lush_dump_ast`、`lush_eval`。下一步是实现 M6；CLI Tab 暂不实现。
+M1–M6 已完成。`lush_tests` 当前 219 个测试，CTest 目标为 `lush_tests`、`lush_version`、`lush_dump_tokens`、`lush_dump_ast`、`lush_eval`。CLI Tab 补全仍未接入，不阻塞 M6。
 
 ---
 
@@ -612,11 +612,11 @@ BoundaryInt @...
 - 脚本模式交互命令缺参报 S006，非交互命令缺参报 S002；
 - REPL 未闭合输入能继续读取；
 - SourceId、R011、直接 Point Origin 和 EOF 有测试；Ctrl+C 已实现，按约定不做自动测试；
-- 不实现 M6 补全。
+- M5 阶段不实现 M6 补全（M6 已完成）。
 
 ---
 
-## M6 — 补全（设计已定，代码未开始）
+## M6 — 补全（已完成）
 
 **目标**：提供与命令声明一致的补全核心 API，复用同一套词法/切词规则；同时完成 `CommandSpec` / `Signature` 的返回类型元数据和参考宿主 `read` 的设计落地。
 
@@ -634,6 +634,14 @@ BoundaryInt @...
 - 不引入 HostInputService；`read` 直接使用宿主输入流，不接入 Driver 的 pending/session/SourceId/Ctrl+C 状态机。
 - CLI Tab 暂缓，M6 完成不依赖 Tab。
 
+**实现结果**
+
+- 新增 `lush_completion`（`completion.h/.cpp`），覆盖 §12 的上下文、候选、类型过滤、成员和会话规则。
+- `CommandSpec` / `Signature` 已带可选 `returnType`，注册时校验 void/维度；运行时不校验 handler 返回值。
+- 参考宿主已增加 `read`，CLI 注入 `std::cin` + `ConsoleSink`；默认无 I/O 构造返回 R010。
+- `unit_completion`、`unit_reference` 已加入；`lush_tests` 共 219 个测试，CTest 仍为 5 个目标。
+- CLI Tab 未接入，符合 M6 边界。
+
 **文件**
 
 - `src/lush/completion/completion.h/.cpp`
@@ -641,7 +649,7 @@ BoundaryInt @...
 - `src/reference/reference_host.h/.cpp`（`read` 与 I/O 注入）
 - `src/cli/main.cpp`（构造 `ReferenceHost` 时注入 `std::cin` + `ConsoleSink`）
 - `tests/unit_completion.cpp`
-- `tests/unit_reference.cpp` 或 `tests/unit_command.cpp`（`read` 测试）
+- `tests/unit_reference.cpp`（`read` 测试）
 - `src/CMakeLists.txt`、`tests/CMakeLists.txt`
 
 **任务**

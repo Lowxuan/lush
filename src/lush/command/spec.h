@@ -24,6 +24,13 @@ enum class ReturnKind {
     Value,
 };
 
+// Completion-oriented static return metadata. It never enforces the runtime
+// value returned by a host function.
+struct ReturnType {
+    core::ValueType type = core::ValueType::Int;
+    int dim = 0; // only meaningful for Point; 0 means unknown/unspecified
+};
+
 struct ParamSpec {
     std::string name;
     ParamType type = ParamType::Any;
@@ -39,6 +46,7 @@ struct CommandSpec {
     std::vector<std::string> aliases;
     std::vector<ParamSpec> params;
     ReturnKind returns = ReturnKind::Void;
+    std::optional<ReturnType> returnType;
     bool interactive = false;
     std::string help;
 };
@@ -55,6 +63,7 @@ struct Signature {
     bool variadic = false;
     bool interactive = false;
     bool returnsValue = false;
+    std::optional<ReturnType> returnType;
 };
 
 } // namespace lush::command

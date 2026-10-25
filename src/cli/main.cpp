@@ -180,8 +180,8 @@ void printDriverDiagnostic(const lush::driver::DriverResult& result) {
 
 int runSource(std::string text) {
     lush::core::Env env;
-    lush::reference::ReferenceHost host;
     lush::cli::ConsoleSink sink;
+    lush::reference::ReferenceHost host(std::cin, sink);
     lush::driver::Driver driver(env, host.registry(), sink);
 
     const lush::driver::DriverResult result = driver.runScript(std::move(text));
@@ -208,8 +208,8 @@ int main(int argc, char** argv) {
 
     if (argc == 1) {
         lush::core::Env env;
-        lush::reference::ReferenceHost host;
         lush::cli::ConsoleSink sink;
+        lush::reference::ReferenceHost host(std::cin, sink);
         lush::driver::Driver driver(env, host.registry(), sink);
         return lush::cli::runRepl(driver);
     }

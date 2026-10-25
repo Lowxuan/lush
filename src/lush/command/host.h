@@ -42,8 +42,9 @@ struct CommandResult {
     }
 };
 
-// Void commands may write to the output stream.  Value functions are pure
-// callables; they return a value and do not receive an Output.
+// Void commands may write to the output stream. Value functions do not receive
+// an Output by default, but a host function may still perform explicit I/O
+// (for example ReferenceHost::read) through state captured by the handler.
 using CommandHandler = std::function<CommandResult(
     const std::vector<core::Value>&, const core::CommandContext&,
     core::Output&)>;

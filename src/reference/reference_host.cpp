@@ -1,6 +1,7 @@
 #include "reference/reference_host.h"
 
 #include "lush/core/format.h"
+#include "lush/core/utf8.h"
 
 #include <cassert>
 #include <cstdlib>
@@ -16,9 +17,12 @@ using lush::command::CommandSpec;
 using lush::command::ParamSpec;
 using lush::command::ParamType;
 using lush::command::RegistrationResult;
+using lush::command::ReturnKind;
+using lush::command::ReturnType;
 using lush::core::CommandContext;
 using lush::core::Output;
 using lush::core::Value;
+using lush::core::ValueType;
 
 ParamSpec pointParam(std::string name, std::string hint) {
     ParamSpec param;
@@ -67,6 +71,15 @@ void requireRegistered(RegistrationResult result) {
 } // namespace
 
 ReferenceHost::ReferenceHost() {
+    initialize();
+}
+
+ReferenceHost::ReferenceHost(std::istream& input, Output& output)
+    : input_(&input), output_(&output) {
+    initialize();
+}
+
+void ReferenceHost::initialize() {
     CommandSpec line;
     line.name = "line";
     line.params = {pointParam("p1", "指定第一个点"),
@@ -89,6 +102,49 @@ ReferenceHost::ReferenceHost() {
     move.params = {numberParam("dx"), numberParam("dy")};
     move.help = "移动";
     requireRegistered(registry_.registerCommand(std::move(move), moveHandler));
+
+    CommandSpec read;
+    read.name = "read";
+    read.returns = ReturnKind::Value;
+    read.returnType = ReturnType{ValueType::String, 0};
+    ParamSpec prompt;
+    prompt.name = "prompt";
+    prompt.type = ParamType::String;
+    prompt.optional = true;
+    prompt.defaultValue = Value::makeString("");
+    prompt.hint = "提示文本";
+    read.params.push_back(std::move(prompt));
+    read.help = "读取一行文本";
+    requireRegistered(registry_.registerFunction(
+        std::move(read),
+        [this](const std::vector<Value>& args,
+               const CommandContext& context) -> CommandResult {
+            if (input_ == nullptr) {
+                return CommandResult::failure(
+                    "read 未配置输入源", std::nullopt, context.nameSource);
+            }
+
+            if (output_ != nullptr && !args.empty() && args[0].isString()) {
+                const std::string& promptText = args[0].asString();
+                if (!promptText.empty()) {
+                    output_->write(promptText);
+                }
+            }
+
+            std::string line;
+            if (!std::getline(*input_, line)) {
+                return CommandResult::failure(
+                    "读取输入失败", std::nullopt, context.nameSource);
+            }
+            if (!line.empty() && line.back() == '\r') {
+                line.pop_back();
+            }
+            if (!lush::core::isValidUtf8(line)) {
+                return CommandResult::failure(
+                    "输入不是有效 UTF-8", std::nullopt, context.nameSource);
+            }
+            return CommandResult::ok(Value::makeString(std::move(line)));
+        }));
 }
 
 } // namespace lush::reference

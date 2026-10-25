@@ -428,6 +428,22 @@ RegistrationResult Registry::registerImpl(
         return registrationError(RegistrationError::InteractiveValue,
                                  "value 函数不能是 interactive");
     }
+    if (spec.returnType) {
+        if (spec.returns == ReturnKind::Void) {
+            return registrationError(RegistrationError::ReturnTypeMismatch,
+                                     "void 命令不能声明 returnType");
+        }
+        if (spec.returnType->type == core::ValueType::Point) {
+            const int dim = spec.returnType->dim;
+            if (dim != 0 && dim != 2 && dim != 3) {
+                return registrationError(RegistrationError::InvalidReturnDim,
+                                         "point 返回维度必须是 0、2 或 3");
+            }
+        } else if (spec.returnType->dim != 0) {
+            return registrationError(RegistrationError::InvalidReturnDim,
+                                     "只有 point 返回类型可以设置 dim");
+        }
+    }
 
     std::vector<std::string> keys;
     keys.reserve(1 + spec.aliases.size());
@@ -561,6 +577,7 @@ RegistrationResult Registry::registerImpl(
     signature.variadic = sawVariadic;
     signature.interactive = spec.interactive;
     signature.returnsValue = spec.returns == ReturnKind::Value;
+    signature.returnType = spec.returnType;
     for (const ParamSpec& param : signature.params) {
         if (param.variadic) {
             continue;
@@ -596,6 +613,20 @@ const Signature* Registry::findSignature(std::string_view name) const {
     const std::shared_ptr<const RegisteredCallable> registered =
         findRegistered(name);
     return registered ? &registered->signature : nullptr;
+}
+
+std::vector<Signature> Registry::signatures() const {
+    std::vector<Signature> result;
+    result.reserve(names_.size());
+
+    std::unordered_set<const RegisteredCallable*> seen;
+    for (const auto& entry : names_) {
+        const RegisteredCallable* registered = entry.second.get();
+        if (seen.insert(registered).second) {
+            result.push_back(entry.second->signature);
+        }
+    }
+    return result;
 }
 
 std::optional<core::CallableInfo> Registry::callableInfo(
