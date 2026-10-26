@@ -561,7 +561,7 @@ BoundaryInt @...
 - 顶层判定：只允许一条非空 `Command`；命令之后允许 `EmptyStmt`；开头的 `;line ...` 不允许进入会话。只有 `single && interactive && argc < required` 才设置 `allowInteractiveSession = true`。
 - 初始命令已提供的参数先全部求值再统一绑定；会话中每次输入只求值并绑定当前必选参数。
 - 会话输入按 `barePoint | expr` 解析，使用单行 `ParseOptions::Script`；纯注释行忽略并重新提示；空白行按空输入；必选空输入取消并返回 R011；会话内不允许多行表达式。
-- SourceId 方案：`SourceId = uint32_t`，0 表示无 Source，有效 ID 从 1 开始；`SourceTable` 由 Driver 内部持有。`Diagnostic`、`CommandContext`、`CallContext`、`EvalContext`、`HostError` 增加 Source 信息；无效 `HostError.source` 回退默认 Source。
+- SourceId 方案：`SourceId = uint32_t`，0 表示无 Source，有效 ID 从 1 开始；M5 的 `SourceTable` 由 Driver 内部持有（M8b 上移 Env）。`Diagnostic`、`CommandContext`、`CallContext`、`EvalContext`、`HostError` 增加 Source 信息；无效 `HostError.source` 回退默认 Source。
 - 直接提交 Point：没有文本 Source；绑定失败仍为 R002/R006，Span 为空，以 `InputOrigin::DirectPoint` 标记来源；`NeedInput` 不增加 sourceId，`CommandContext` 不增加 argOrigins。
 - 复用 M2 的 `IncompleteReason`：
   - `NeedStatement`：`if` / `while` / `for` / `for-in` / `else` 缺 body；
@@ -733,7 +733,7 @@ BoundaryInt @...
 
 ## M8a — 用户函数：语法、类型与静态结构（计划）
 
-**目标**：完成 `def` / `return` 的语法、AST、类型注解和静态校验，不执行函数体。
+**目标**：完成 `def` / `return` 的语法、AST、函数签名/TypeToken 模型和静态校验，不执行函数体。
 
 **语法**
 
@@ -746,25 +746,30 @@ def f() { ... }
 - 只允许顶层 `def`；嵌套/块内/函数内 `def` → S011。
 - 参数注解省略 = `any`；返回注解省略 = `void`；`void` 只能作为返回类型。
 - 支持类型名：`int`、`double`、`bool`、`string`、`list`、`point`、`point2`、`point3`、`any`、`callable`；`void` 仅返回。
-- 参数不支持默认值、可选参数、变参；参数名必须唯一。
-- 支持 block body 和单条 statement body。
+- 参数不支持默认值、可选参数、变参；参数名必须唯一；`a` 和 `A` 可并存。
+- 参数名大小写敏感；参数名与函数名冲突按大小写不敏感检查。
+- 支持 block body 和单条 statement body；`def f()` 后下一条语句是 body；空行取消 body（REPL Cancelled，脚本 P002）；注释不取消；`def f()\n;` 是空 body。
+- `point2`、`point3`、`any`、`callable`、`void` 作为保留名。
 
 **实现点**
 
 - Lexer 增加 `Arrow` token，按最长匹配处理 `->`。
 - AST 增加 `Def` / `Return`、参数声明、`TypeAnnotation`、函数体；AST dump 更新。
-- Parser 增加 `def` / `return`，更新 `Incomplete` 判定（未闭合 body/括号）。
-- 校验阶段收集全部顶层 `def`，建立函数签名表；支持前向引用、递归调用和同名冲突检测。
+- Parser 增加 `def` / `return`，更新 `Incomplete` 判定（未闭合 body/括号）；`def` 行尾按 `NeedStatement`，`return` 行尾是 bare return。
+- 新增 core `FunctionSignature` 和 `ValueType::TypeToken` 的静态模型；`callable` token 不是 invocable。
+- 校验阶段先收集全部顶层 `def`，建立函数签名表；支持前向引用、递归调用和同名冲突检测。
+- `validate` / `validateExpression` 接收 `Env`，以便检查已有变量、已有函数和 `FunctionTable`。
 - 静态检查：
-  - 函数名/参数名/类型注解合法性；
+  - 顶层位置、函数名/参数名/类型注解合法性；
+  - 函数名/参数/类型保留名，`a`/`A` 允许；
   - `return` 只能出现在函数体；
   - 值函数必须有 `->`，void 函数不得返回表达式；
-  - 值函数的 `return expr` 只做 int → double 提升，其它返回类型不兼容；
+  - `S012` 只处理 void/return 形态；`return expr` 的实际类型留给运行时 R002；
   - 参数 `double` 接受 int 并转换；`int` 只接受 int；
   - `point2`/`point3` 不接受 list → point；必须显式 `point(...)`；
-  - 用户函数名大小写不敏感，进入 common callable namespace；冲突按 S011/S003 处理。
+  - 用户函数名大小写不敏感，进入 common callable namespace；`def Foo` 遇到已有变量 `foo` → S003；变量目标与函数名冲突 → S003；其它声明冲突 S011。
 - `S007` 不再产生；新增 S010/S011/S012 的诊断位置和测试。
-- 顶层 `def` 收集后按顺序安装函数值；同一脚本重复定义同名函数 → S011；REPL 重定义允许替换（运行时 M8b 处理）。
+- 顶层 `def` 收集后按顺序安装到 `Env` 的 `FunctionTable`；同一脚本重复定义同名函数 → S011；REPL 重定义允许替换（运行时 M8b 完成）。
 
 **文件**
 
@@ -772,6 +777,8 @@ def f() { ... }
 - `src/lush/core/ast.h/.cpp`
 - `src/lush/core/parser.h/.cpp`
 - `src/lush/core/validate.h/.cpp`
+- `src/lush/core/value.h/.cpp`（`ValueType::TypeToken`、函数签名类型）
+- `src/lush/core/cell.h`（`FunctionTable` 挂接点）
 - `src/lush/core/eval.h`（预声明接口）
 - `tests/unit_lexer.cpp`、`unit_parser.cpp`、`unit_eval.cpp`、`golden_spec.cpp`
 - `src/cli/main.cpp` 的 `--dump-ast` 输出
@@ -780,9 +787,12 @@ def f() { ... }
 **测试**
 
 - `def` 两种 body、类型注解、`->`、参数列表、空参数；
+- `def f()\nx=1`、`def f()\n;`、空行取消、注释不取消、连续 def 的行为；
 - 非顶层 `def`、重复参数、未知类型、`void` 参数、重复函数、名称冲突；
+- `def Foo` 遇变量 `foo`、变量目标与函数名冲突、`a`/`A` 并存、保留名；
 - `return` 位置、值函数/void 函数的静态误用；
 - `def` 跨行/未闭合 body 的 `Incomplete`；
+- `TypeToken` 与 `callable` type token 的静态模型；
 - `--dump-ast` 覆盖 Def/Return。
 
 **完成标准**
@@ -790,6 +800,7 @@ def f() { ... }
 - 语法和静态诊断稳定；
 - 尚未执行函数体时，相关测试可只验证解析/校验；
 - `S007` 相关旧测试迁移到 S010/S011/S012；
+- `type` G42 等旧 golden 的 `type(int)==type` 断言迁移到 `callable` token；
 - 不提前修改 REPL 行为；M8b 再接执行。
 
 ---
@@ -803,25 +814,28 @@ def f() { ... }
 - `UserFunction` 持有：
   - 函数体 AST 的共享所有权；
   - `std::shared_ptr<const core::Source>`（或等价 SourceHandle）；
-  - `SourceId`（仅用于诊断/SourceTable 查询）；
-  - 参数声明、返回类型、函数名。
+  - `SourceId`（用于诊断/SourceTable 查询）；
+  - 参数声明、返回类型、函数名、`CallableKind`。
 - **不能只存 SourceId**：SourceId 不拥有 AST，也不保证 SourceTable 生命周期；函数值必须能独立于 `Program` 存活。
-- 顶层 `def` 在程序执行前安装到 common callable namespace；函数体在调用时执行。
-- 函数调用创建新的局部作用域；参数按注解绑定；函数体读取当前全局环境；v1 不支持闭包，不捕获定义点的局部变量。
-- 函数体内赋值沿用 §6.1：找到最近可见绑定就写入，找不到才创建局部绑定。
-- Eval 增加返回控制流：`return expr` / `return;` 穿过 block/if/while/for 到函数边界；`break`/`continue` 仍只作用于循环。
-- 值函数自然结束未 return → R014；递归深度 >1024 → R015；`return` 在函数外 → S010。
-- void 函数只能作语句调用；在表达式位置使用 → S012。
-- 函数值可存入变量/list、作为参数/返回值；`type(f)`、`string(f)`、`==` 按现有 callable 规则。
+- `Env` 持有 `FunctionTable` 和 `SourceTable`；Source 表保留全部源码直到 `Env` 销毁，`Driver` 不再在每次 `feedLine` 后清空。
+- 顶层 `def` 在程序执行前安装到 `Env` 的 `FunctionTable`；函数体在调用时执行。
+- 函数调用创建新的函数作用域；参数按注解绑定；函数体只看到全局根作用域和本函数作用域，不捕获调用点/定义点局部变量；v1 不支持闭包。
+- 函数体内赋值沿用 §6.1：找到全局根或本函数作用域的绑定就写入；找不到才在本函数作用域创建。已存在全局变量可写，不隐式创建新全局。
+- Eval 增加返回控制流：`return expr` / `return;` 穿过 block/if/while/for 到函数边界；循环遇到 Return 不执行 `for` step；`break`/`continue` 仍只作用于循环。
+- `return` 表达式先提交 pending postfix；值函数自然结束未 return → R014；递归深度 >1024 → R015；`return` 在函数外 → S010。
+- void 函数只能作语句调用；在表达式位置使用 → S012；`callable` type token 调用 → R012。
+- 函数值可存入变量/list、作为参数/返回值；`type(f)` 返回 `callable` token，`string(f)` 返回函数名，`==` 按 callable 身份比较。
+- 宿主运行时：`CallContext`/`CommandContext` 带 `EvalContext*`，`FunctionHandler` 接收 `EvalContext&`；runtime 缺失 → R010；宿主不得保存 runtime；`finishSession` 构造 runtime。
 - REPL 中定义成功后函数值跨 `feedLine` 保留；Source/AST 生命周期与 `Env` 一致。
 
 **文件**
 
-- `src/lush/core/value.h/.cpp`（UserFunction / callable 接口，按实现需要调整）
-- `src/lush/core/eval.h/.cpp`（Flow::Return、函数作用域、递归计数）
-- `src/lush/core/cell.h`（如需环境捕获接口）
-- `src/lush/driver/driver.h/.cpp`（REPL 顶层 def 安装、Source 持久化）
-- `src/lush/driver/source_table.*`（如需公开查找/共享 Source）
+- `src/lush/core/value.h/.cpp`（TypeToken、UserFunction / callable 接口）
+- `src/lush/core/eval.h/.cpp`（Flow::Return、函数作用域、递归计数、宿主调用 helper）
+- `src/lush/core/cell.h`（Env、FunctionTable、SourceTable、函数调用边界）
+- `src/lush/core/source_table.*`（从 driver 上移，Env 持有）
+- `src/lush/command/host.h` / `spec.h`（FunctionHandler runtime、CommandContext）
+- `src/lush/driver/driver.h/.cpp`（使用 Env 的 SourceTable/FunctionTable、REPL 顶层 def 安装）
 - `tests/unit_eval.cpp`、`unit_driver.cpp`、`unit_command.cpp`、`golden_spec.cpp`
 
 **测试**
@@ -830,14 +844,16 @@ def f() { ... }
 - 参数类型/转换：double 收 int、int 拒 double、point2/3 拒 list；
 - 递归/互递归/前向引用、1024 边界；
 - 函数值存变量/list、作为参数、作为返回值；
-- 函数内全局读取/写入、局部参数、无闭包行为；
-- REPL 跨行 def、跨行调用、错误 Source/Span、Ctrl+C/EOF 行为不回归；
-- 函数体中的命令、`echo`、`read`。
+- 函数内全局读取/写入、局部参数、无闭包行为、调用点局部不可见；
+- REPL 跨行 def、跨行调用、错误 Source/Span、SourceTable 跨行保留；
+- 函数体中的命令、`echo`、`read`；
+- 宿主函数拿 runtime 调用 callable、runtime 缺失 R010；
+- `type(int/len/read/f/type/callable) == callable`，`callable(1)` R012。
 
 **完成标准**
 
 - 函数定义不悬空；REPL 多次调用稳定；
-- 错误码、Span、Source 正确；
+- 错误码、Span、Source 正确；函数体 Source 与调用点 Source 不混用；
 - 现有 223 个测试不回归；
 - Debug / Release / Werror / Ninja 全绿。
 
@@ -850,12 +866,20 @@ def f() { ... }
 **实现点**
 
 - Callable 签名增加用户函数元数据：参数名、注解类型、必选性、返回类型（void / typed / unknown）。
+- 新增只读 `CompletionScope`，并让 `CompletionRequest` 使用它（保留 source/cursor/registry/sessionInput）：
+  - 全局变量（来自 Env）；
+  - 当前函数参数和函数局部作用域；
+  - 当前 `FunctionTable`/用户函数签名；
+  - 不暴露调用点局部变量；
+  - 不修改真实 `Env`。
 - 补全：
   - 语句开头、表达式、命令参数、调用参数、会话参数识别用户函数；
   - 插入纯文本名字；语句位置不自动补 `(`；
   - 用户函数候选详情显示 `name(a: int, b: string) -> double`；
   - `f().` 使用返回值类型做成员补全；void 不提供成员/可迭代候选；
-  - 参数类型过滤使用 §3.10 规则（point2/3 不接受 list）。
+  - 参数类型过滤使用 §3.10 规则（point2/3 不接受 list）；
+  - `callable` token 作为类型名候选，不作为可调用函数候选；
+  - 函数体补全使用 `CompletionScope` 的参数/局部层，不能看到调用点局部。
 - `def` 后支持函数名/参数名/类型名/`->`/`{` 的上下文（至少类型名和 `def` 关键字）；
 - `return` 在函数体语句开头出现；
 - REPL/Source：函数定义和调用错误保留正确 SourceId/Span；
@@ -864,8 +888,9 @@ def f() { ... }
 **文件**
 
 - `src/lush/completion/completion.h/.cpp`
+- `src/lush/core/cell.h`（CompletionScope）
+- `src/lush/core/value.h`（TypeToken/FunctionSignature 元数据）
 - `src/lush/command/registry.*`（如需统一签名描述）
-- `src/lush/core/value.*`（UserFunction 元数据）
 - `tests/unit_completion.cpp`
 - `docs/spec.md` §12、本文件
 
@@ -873,7 +898,8 @@ def f() { ... }
 
 - 用户函数在语句/表达式/参数/会话中可见；
 - 参数类型过滤、void 排除、返回类型成员；
-- def/类型名补全、`->` 和类型错误；
+- def/类型名/`callable` token 补全、`->` 和类型错误；
+- 函数体补全看不到调用点局部；
 - 用户函数重定义、签名更新；
 - 任意函数值（变量中）的签名展示或明确的 unknown 降级。
 
@@ -1055,6 +1081,8 @@ def f() { ... }
 - 每个 bug 修复补回归测试；每个错误码至少一个用例。
 - 每个里程碑结束都要：`/W4` 零警告、相关测试全绿、更新 `README.md` / `AGENTS.md` 的进度。
 - 不要提前实现后续里程碑的模块；M8a 不执行函数，M8b 不接 CLI Tab，M9 不重写编辑器分析协议。
-- 函数值必须拥有 AST 和 Source；SourceId 只做诊断/查询，禁止用裸 SourceId 指向已销毁的 AST/SourceTable。
+- `Env` 持有 `FunctionTable` 和 `SourceTable`；Source 保留到 `Env` 销毁；函数值必须拥有 AST 和 Source，SourceId 只做诊断/查询。
+- `callable` 是 `ValueType::TypeToken`，不是 invocable callable；`type(任意 invocable callable) == callable`。
+- 补全使用只读 `CompletionScope`，不修改真实 `Env`，不暴露调用点局部。
 - 测试基线：M7 结束 223 个测试；每个里程碑结束时更新实际数量，不固定提前写死。
 - 建议验收顺序：M7 → M8a → M8b → M8c → M9 → M10 → M11；需要并行时只能并行文档整理和纯测试设计，不能跨语义门禁合并实现。

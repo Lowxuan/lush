@@ -4,7 +4,7 @@
 
 - 语言规范：[docs/spec.md](docs/spec.md)（0.4.0；M7 已实现，M8–M11 规划）
 - 开发里程碑：[docs/steps.md](docs/steps.md)（M1–M7 已完成，M8–M11 计划）
-- 当前状态：**M7 已完成，M8–M11 已规划**（M1 词法 + M2 AST/Parser + M3 求值/内建 + M4 命令系统/参考宿主 + M5 会话/REPL/脚本执行 + M6 补全核心与 `read` + M7 数值字符串；用户函数、CLI Tab、编辑器分析和两份用户文档见 `docs/steps.md`）
+- 当前状态：**M7 已完成，M8–M11 已规划**（M1 词法 + M2 AST/Parser + M3 求值/内建 + M4 命令系统/参考宿主 + M5 会话/REPL/脚本执行 + M6 补全核心与 `read` + M7 数值字符串；M8 计划引入 `Env` 函数表/Source 表、`TypeToken`、用户函数和 `CompletionScope`；CLI Tab、编辑器分析和两份用户文档见 `docs/steps.md`）
 
 ## 环境
 
@@ -47,8 +47,8 @@ ctest --test-dir build -C Debug --output-on-failure
 
 - `src/lush/core/`：语言核心（已实现 UTF-8、Source、Diagnostic、Token、Lexer、AST、Parser、Value、Cell/Env、Eval、Validate、格式化和内建）
 - `src/lush/command/`：命令注册、参数绑定、宿主、交互会话
-- `src/lush/driver/`：脚本 / REPL 执行状态机、SourceTable（已实现）
-- `src/lush/completion/`：补全核心（已实现；M9 接 CLI Tab）
+- `src/lush/driver/`：脚本 / REPL 执行状态机、SourceTable（当前；M8b 上移 Env）
+- `src/lush/completion/`：补全核心（已实现；M8c 加 CompletionScope，M9 接 CLI Tab）
 - `src/reference/`：参考宿主 `line` / `circle` / `move` / `read`（已实现；CLI 演示宿主）
 - `src/lush/`：公共头
 - `src/cli/`：命令行前端（REPL、脚本、`-e`、dump；M9 接 replxx）

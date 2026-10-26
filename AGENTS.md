@@ -71,9 +71,9 @@ M5 会话 / REPL 约定（已完成）：
 - 初始命令已提供参数先全部求值再统一绑定；会话中每次输入只求值并绑定当前必选参数。
 - 会话输入单行 `barePoint | expr`，使用 `ParseOptions::Script`；纯注释行忽略并重提示；空白行按空输入；必选空输入取消并返回 R011；会话内不允许多行表达式。
 - EOF：pending 输入按 Script 重解析，必要时合成 P002；会话中 EOF 取消；正常 EOF 退出 0，pending EOF 错误退出 1。Ctrl+C：会话取消、pending 取消、空闲清行重提示；Windows/POSIX 实现，不写自动测试。
-- SourceId：`SourceId = uint32_t`，0 表示无 Source，有效 ID 从 1 开始；`SourceTable` 由 Driver 内部持有。`Diagnostic`、`CommandContext`、`CallContext`、`EvalContext`、`HostError` 增加 Source 信息；无效 `HostError.source` 回退默认。
+- SourceId：`SourceId = uint32_t`，0 表示无 Source，有效 ID 从 1 开始；M5–M7 的 `SourceTable` 由 Driver 内部持有，M8b 计划上移到 Env（源码保留到 Env 销毁）。`Diagnostic`、`CommandContext`、`CallContext`、`EvalContext`、`HostError` 增加 Source 信息；无效 `HostError.source` 回退默认。
 - 直接提交 Point 无文本 Source；绑定失败仍为 R002/R006，Span 为空，以 `InputOrigin::DirectPoint` 标记来源；`NeedInput` 不加 sourceId，`CommandContext` 不加 argOrigins。
-- 可选参数默认值没有 Span/Source，`argSpans/argSources` 只覆盖实际传入参数；SourceId 只在当前命令/会话处理期间有效。
+- 可选参数默认值没有 Span/Source，`argSpans/argSources` 只覆盖实际传入参数；普通命令/会话的 SourceId 只在当前处理期间有效；M8b 起函数 Source 保留到 Env 销毁。
 - interactive + variadic 允许注册；会话只补必选固定参数，变参不参与会话补齐，可以为 0 个。
 - CLI 使用 `ReferenceHost` 作为演示宿主；依赖增加 `cli → reference`。顺序解析参数，保留 dump 选项；主提示 `lush> `，续行 ` ...> `，会话提示 `hint: `；非 TTY 不打印提示；会话必选空行 TTY 下只打印 `已取消`。
 - 脚本退出码：成功 0，词法/语法/校验/运行时错误 1，用法/读文件失败 2；REPL 普通行错误不累计退出码。
@@ -99,9 +99,9 @@ M7 数值字符串实现（已完成）：
 
 M8–M11 规划摘要（未实现，详见 `docs/steps.md`）：
 
-- M8a：`def`/`return`、`->`、`point2`/`point3`、`int`/`double`/`bool`/`string`/`list`/`point`/`any`/`callable` 注解；只允许顶层 `def`，执行前收集并提升；S010/S011/S012。
-- M8b：`UserFunction` 持有 AST + Source；SourceId 只作诊断/查询；common callable namespace；语句位置 `f 1 2`、表达式 `f(1,2)`；无闭包；参数不接受 list→point；返回只允许 int→double；值函数漏 return 为 R014；递归上限 1024 / R015。
-- M8c：用户函数签名进入 completion；返回类型驱动成员补全；def/类型名补全；void 不作为值。
+- M8a：`def`/`return`、`->`、`point2`/`point3`、`int`/`double`/`bool`/`string`/`list`/`point`/`any`/`callable` 注解；只允许顶层 `def`，执行前收集并提升；`FunctionSignature`/`ValueType::TypeToken` 静态模型；S010/S011/S012。
+- M8b：`Env` 持有 `FunctionTable` 和 `SourceTable`；Source 保留到 Env 销毁；`UserFunction` 持有 AST + Source；common callable namespace；函数调用边界只看全局根 + 当前函数；语句位置 `f 1 2`、表达式 `f(1,2)`；无闭包；参数不接受 list→point；返回只允许 int→double；值函数漏 return 为 R014；递归上限 1024 / R015。
+- M8c：用户函数签名进入 completion；只读 `CompletionScope`；返回类型驱动成员补全；def/类型名/`callable` token 补全；void 不作为值。
 - M9：vendored replxx，固定 commit `1f149bfe20bf6e49c1afd4154eaf0032c8c2fda2`（BSD），CLI 行编辑/历史/Tab；关闭时回退 `std::getline`；Windows 实测，Linux 至少编译。
 - M10：comment trivia + best-effort token/error span；严格 lexer 不变；宿主编辑器分析 API；UTF-8 ↔ Qt UTF-16 示例；公开宿主 API/`examples/embed.cpp`。
 - M11：`docs/language.md` 与 `docs/embedding.md`，并让示例参与构建/测试。
@@ -139,8 +139,8 @@ ctest --preset vs2022-debug --output-on-failure
 ```text
 src/lush/core/        只依赖标准库（utf8/source/diagnostic/token/lexer/version）
 src/lush/command/     命令注册、参数绑定、宿主、交互会话（已实现）
-src/lush/driver/      脚本 / REPL 执行状态机、SourceTable（已实现）
-src/lush/completion/  补全核心（已实现；CLI Tab 在 M9）
+src/lush/driver/      脚本 / REPL 执行状态机、SourceTable（当前；M8b 上移 Env）
+src/lush/completion/  补全核心（已实现；M8c 加 CompletionScope，M9 接 CLI Tab）
 src/reference/        参考宿主 line/circle/move/read（已实现；CLI 演示宿主）
 src/cli/              CLI 前端（REPL、脚本、-e、dump；M9 接 replxx）
 third_party/replxx/   M9 计划中的 vendored CLI 依赖（BSD；不进入 core）
@@ -174,9 +174,13 @@ tests/                单一 lush_tests 可执行文件
 - **解析先于执行**：脚本先整体解析/校验再执行（D14），首错中止；脚本缺参不进入会话：交互命令缺参报 S006，非交互命令缺参报 S002；参数过多一律 S002。交互会话只允许 REPL 顶层单条命令。
 - **命令不是值**：内建函数、类型构造器和用户函数是一等 callable；`echo line`、`x = line` 是 S008。
 - **`Incomplete` 不是错误**：仅 REPL 用于未闭合 `{}` / `()` / `[]` 或行尾 `\`；脚本 EOF 的未闭合是 P002。
-- **用户函数（M8 计划）**：`def` 只允许顶层，执行前收集/提升；参数注解省略为 `any`，返回注解省略为 `void`；无闭包、无嵌套 def、无默认/变参；函数体读全局环境，赋值沿用 §6.1；参数不接受 list→point，返回只允许 int→double；值函数漏 return 为 R014，递归上限 1024 / R015。
+- **用户函数（M8 计划）**：`def` 只允许顶层，执行前收集/提升；参数注解省略为 `any`，返回注解省略为 `void`；无闭包、无嵌套 def、无默认/变参；函数体只看全局根 + 当前函数作用域，可写已存在全局，不创建新全局；参数不接受 list→point，返回只允许 int→double；值函数漏 return 为 R014，递归上限 1024 / R015。
+- **def/return 行规则**：`def f()\nx=1` 的 `x=1` 是 body；空行取消 body（REPL Cancelled，脚本 P002）；注释不取消；`def f()\n;` 是空 body；`return` 行尾是 bare return，表达式换行需 `\`。
 - **调用位置仍决定语法**：语句位置 `f 1 2` 是并置调用；表达式位置 `f(1,2)` 是后缀调用；语句位置 `f(1,2)` 仍是命令 + 一个 Point 参数。
-- **函数值生命周期**：必须拥有 AST + Source；SourceId 只做诊断/查询，禁止裸 SourceId 指向已销毁的 AST/SourceTable。
+- **函数值生命周期**：`Env` 持有 `FunctionTable` + `SourceTable`；Source 保留到 Env 销毁；函数值必须拥有 AST + Source，SourceId 只做诊断/查询。
+- **callable 类型**：`callable` 是 `ValueType::TypeToken`，不是 invocable；`int`/`len`/`read`/用户函数都是 callable；`callable(1)` 是 R012。
+- **函数名/参数名**：函数名大小写不敏感；变量/参数名大小写敏感；`a`/`A` 允许；`point2`/`point3`/`any`/`callable`/`void` 等为保留名；`def Foo` 遇变量 `foo` 是 S003。
+- **宿主 runtime**：`CallContext`/`CommandContext` 带非拥有 `EvalContext*`；`FunctionHandler` 直接收 `EvalContext&`；runtime 缺失报 R010；宿主不得保存。
 - **编辑器分析（M10 计划）**：严格 Lexer 继续首错中止；宿主高亮使用独立的 best-effort token/trivia/error span 接口，不要求完整 AST，不把 Qt 引入 core。
 - 诊断分 L/P/S/R 四段，位置是原始文本的物理 `line:col`；错误码必须与 spec §11.1 一致。
 - `-9223372036854775808` 仅作为一元负号的操作数合法；裸 `9223372036854775808` 是 L004。

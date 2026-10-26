@@ -55,12 +55,19 @@ Lush 是一门嵌入 C++ 宿主的命令语言，目标场景是 AutoCAD 式的�
 | D35 | 参考宿主提供 `read(prompt = "") -> string`；它是宿主 I/O 函数，不引入 HostInputService；prompt 经宿主 Output 输出，EOF 或无效 UTF-8 返回 R010 |
 | D36 | `int(string)` / `double(string)` 只做显式、严格的数值字符串转换；不允许隐式 string → number |
 | D37 | 用户函数语法为 `def name(params) [-> type] body`；参数类型写作 `name: type`，返回类型写作 `-> type`；参数注解省略时为 `any`，返回注解省略时为 `void` |
-| D38 | 用户函数只允许顶层定义；执行前收集并提升全部顶层 `def`；同名函数在同一脚本内重复定义报 S011，REPL 可重定义 |
+| D38 | 用户函数只允许顶层定义；执行前收集并提升全部顶层 `def`；同名函数在同一脚本内重复定义报 S011，REPL 可重定义替换 |
 | D39 | 用户函数是 callable 值；语句位置用 `f 1 2`，表达式位置用 `f(1,2)`；`f(1,2)` 在语句位置仍是命令 + Point 参数 |
 | D40 | `-> void` / 无返回注解的函数没有值；值函数必须声明 `-> type` 并返回该类型；返回类型只允许 int → double 的提升，参数不接受 list → point 隐式转换 |
-| D41 | 用户函数体读取当前全局环境，不捕获局部变量（无闭包）；用户函数递归深度上限 1024，超限报 R015 |
+| D41 | 用户函数体只读取全局根环境与当前函数参数/块作用域，不捕获调用点局部变量（无闭包）；用户函数递归深度上限 1024，超限报 R015 |
 | D42 | 用户函数值必须拥有函数体 AST 和 Source 句柄；SourceId 只用于诊断和 SourceTable 查询，不能单独保证函数体生命周期 |
 | D43 | CLI Tab 使用 vendored replxx（BSD）实现行编辑、历史和候选展示；核心仍零第三方依赖，replxx 仅作为 CLI 可选依赖 |
+| D44 | `callable` 是 `ValueType::TypeToken`，不是可调用值；所有 invocable callable（内建、宿主函数、用户函数）的 `type(...)` 都返回 `callable` token；`callable(1)` 报 R012 |
+| D45 | `Env` 持有 `FunctionTable` 和 `SourceTable`；SourceId 按 Env 分配；源码保留到 Env 销毁；函数与 Source 同生命周期 |
+| D46 | 函数调用边界只暴露全局根作用域 + 当前函数作用域；已存在的全局变量可写，不存在的名字在函数局部创建；`def` 后空行取消 body，`;` 表示空 body |
+| D47 | `CallContext` / `CommandContext` 可携带非拥有的 `EvalContext*`；`FunctionHandler` 直接接收 `EvalContext&`；缺少 runtime 的函数调用报 R010 |
+| D48 | 补全使用只读 `CompletionScope`（全局变量 + 函数参数/局部 + FunctionTable），不修改真实 `Env`，也不暴露调用点局部 |
+| D49 | 函数名大小写不敏感；变量/参数名大小写敏感；函数名、参数名、`point2`/`point3`/`any`/`callable`/`void` 等保留名冲突按 S003/S011 处理 |
+| D50 | `def foo()` 遇到已有变量 `Foo` 报 S003；脚本内函数同名报 S011，REPL 同名替换；函数体内写同名函数/变量目标报 S003 |
 
 ### 0.2 目录
 
@@ -615,18 +622,21 @@ returnStmt  = "return" [ expr ] ;
 ```
 
 - `def` 只允许出现在程序顶层；出现在 block、`if`、循环或另一个函数体内是 S011。
-- 参数注解省略时等价于 `any`。参数不支持默认值、可选参数或变参；参数名必须唯一。
-- `void` 只允许作为返回类型；不能出现在参数注解中。
+- 参数注解省略时等价于 `any`。参数不支持默认值、可选参数或变参；参数名必须唯一。参数名大小写敏感（`a` 与 `A` 可并存），但参数名与函数名冲突按大小写不敏感检查。
+- `void` 只允许作为返回类型；不能出现在参数注解中。`point2`、`point3`、`any`、`callable`、`void`、关键字、内建名和已注册命令名是保留名，不能作为函数名或参数名。
 - 没有 `->` 的函数是 void 函数；有 `->` 的函数是值函数。
 - 顶层 `def` 在执行前统一收集并提升：同一程序内的函数可以在定义之前调用，可以互相递归；同一脚本重复定义同名函数报 S011。REPL 中重新定义同名用户函数允许替换。
-- 函数名进入 common callable namespace，大小写不敏感；不能与关键字、内建函数、参考宿主命令或已注册 callable 冲突。用户函数名冲突是 S011，变量名与 callable 冲突仍按 S003。
-- 函数值是一等 callable，可存入变量/list、作为参数传递、作为返回值；`type(f)` 返回 `type`，`string(f)` 输出函数名。
-- 函数体是新的局部作用域；参数在该作用域内绑定。函数体可以看到当前全局环境，但不捕获定义点的局部变量；v1 不支持闭包。
-- 函数体内的赋值沿用 §6.1：找到最近可见绑定就写入该绑定，找不到才在当前函数作用域创建。因此函数可以修改已存在的全局变量；不会隐式创建同名局部变量。
+- `def f()` 后的 body 从下一条语句开始；`def f()\nx = 1` 中 `x = 1` 是 body。`def f()` 后的空行取消 body（REPL 返回 Cancelled，脚本为 P002）；注释行不取消；`def f()\n;` 是空 body。`def f()\ndef g() ...` 中 `def g` 是 `f` 的 body，随后报 S011；要定义两个函数必须用 `{}` 或 `;` 分隔。
+- 函数名进入 common callable namespace，大小写不敏感；不能与关键字、内建函数、参考宿主命令、类型名或已注册 callable 冲突。用户函数名冲突是 S011；`def Foo()` 遇到已有变量 `foo` 是 S003（位置在函数名），变量目标与用户函数名冲突也是 S003。
+- 函数值是一等 callable，可存入变量/list、作为参数传递、作为返回值；`type(f)` 返回 `callable` type token，`string(f)` 输出函数名。
+- 函数体是新的局部作用域；参数在该作用域内绑定。函数体只看到当前全局根环境和本函数作用域，不捕获定义点或调用点的局部变量；v1 不支持闭包。
+- 函数体内的赋值沿用 §6.1：找到全局根或当前函数作用域中的绑定就写入；找不到才在当前函数作用域创建。因此函数可以修改已存在的全局变量，但不会隐式创建新的全局变量。
 - 语句位置调用使用 `f 1 2`；表达式位置调用使用 `f(1, 2)`。语句位置的 `f(1, 2)` 仍按命令 + 一个 Point 参数解析，不是函数调用。
 - 用户函数的参数和返回类型注解是运行时契约，不会被静默转换成其它类型；只允许 `double` 参数接收 int 并提升，以及 `-> double` 返回值把 int 提升为 double。用户函数参数不接受 list → point 隐式转换，必须显式 `point(list)`。
-- `return expr` 只能出现在值函数中；`return;` 只能出现在 void 函数中；`return` 出现在函数外是 S010。
+- `return expr` 只能出现在值函数中；`return;` 只能出现在 void 函数中；`return` 出现在函数外是 S010。`return` 在行尾是 bare return；要返回下一行表达式必须用 `\` 续行。
 - 值函数执行到函数体末尾且没有执行到 `return expr` → R014。递归深度超过 1024 → R015。
+- `callable` 注解接受所有 invocable callable（内建、宿主函数、用户函数），不接受 `callable` type token 本身。实际参数/返回值类型不匹配是 R002；S012 只处理 void/return 形态错误。
+- 用户函数安装到 `Env` 的 `FunctionTable`；`Env` 的 `SourceTable` 保留定义 Source 到 `Env` 销毁；函数值不依赖调用点的 `Program`。
 
 ---
 
@@ -642,15 +652,25 @@ returnStmt  = "return" [ expr ] ;
 | `string` | UTF-8 字符串，按码点索引 |
 | `list` | 异构、可变、值语义 |
 | `point` | 2 或 3 维，坐标恒为 double |
-| `type` | 可调用值（函数/类型构造器）的类型；`type` 本身也是 callable |
+| `type` | 内建 callable，返回参数的类型；本身也是 invocable callable |
+| `callable` | `ValueType::TypeToken`；所有 invocable callable 的 `type(...)` 结果；不是可调用值 |
 
 `ref` 不是一等类型：它只能作为变量的当前内容存在，不能进入 list、Point、命令参数或返回值（见 4.5）。
 
 `void` 只描述"没有返回值"，不是值。
 
-`type` 既是可调用值的类型名，也是一个内建 callable（返回参数的类型构造器）。`int`、`double`、`bool`、`string`、`list`、`point`、`type`、`len` 都是 callable 值；其中前六个是数据类型的构造器，`type` 是元类型兼查询函数，`len` 是普通函数。用户 `def` 定义的函数也是 callable 值。callable 值可以存入变量/list、作为 `ref` 目标、作为命令的 `any` 参数，但不能参与算术或大小比较（见 4.7）。
+`type` 是内建 callable，用于查询参数的类型；invocable callable 的运行时类型标记是 `callable` type token。`int`、`double`、`bool`、`string`、`list`、`point`、`type`、`len`、`read` 和用户 `def` 函数都是 invocable callable。callable 值可以存入变量/list、作为 `ref` 目标、作为命令的 `any` 参数，但不能参与算术或大小比较（见 4.7）。
 
-用户函数的类型注解使用 `callable` 表示 callable 值，等价于值类型 `type`。void 函数没有值形态，只能作为语句调用；把 void 函数调用放到表达式位置是 S012。
+0.4.0 增加 `ValueType::TypeToken`。`callable` 是一个 type token，不是 invocable callable：
+
+- `type(int)`、`type(len)`、`type(read)`、`type(f)`、`type(type)`、`type(callable)` 都返回 `callable` token；
+- `type(4.4) == double` 等数据类型构造器行为不变；
+- `type(callable) == callable`；
+- `callable` token 可以存入变量/list、作为 `any` 参数；`callable` 注解不接受 token；
+- `callable(1)` 是 R012；token 不是转换器，也不把任何值转成 callable；
+- `string(callable)` 输出 `callable`。
+
+用户函数的类型注解使用 `callable` 表示 invocable callable。void 函数没有值形态，只能作为语句调用；把 void 函数调用放到表达式位置是 S012。
 
 ### 4.2 Point
 
@@ -982,6 +1002,9 @@ for (i = 0; i < n; i++) stmt
 
 - 用户函数的 body 可以是 block 或单条语句；两种形式都引入函数调用作用域。
 - 函数参数在进入函数时创建为局部 cell；参数名在函数体内优先于同名全局变量。
+- 函数调用边界只暴露全局根作用域和当前函数作用域；调用点的块变量、循环变量和函数参数不可见。函数体内的嵌套 block 仍正常叠加在函数作用域上。
+- 函数体内写入已存在的全局变量会穿透到全局 cell；找不到的名字在当前函数作用域创建。调用结束后函数局部 cell 被移除。
+- 函数体中的 `return` 在返回前提交该表达式的 pending postfix（例如 `return i++`）；循环遇到 Return 时不再执行 `for` step。
 - 函数体执行到 `return expr` 时，按 `-> type` 做返回值绑定；只有 int → double 的提升允许。
 - `return;` 结束 void 函数；void 函数自然结束时也正常返回。
 - 值函数执行到 body 末尾仍未执行 `return expr` 时，报 R014；不会隐式返回 0、空字符串或最后一个表达式的值。
@@ -1164,13 +1187,24 @@ LINE (0, 0) (1, 1)
 - v1 不引入统一的 HostInputService；宿主应显式注入输入流和 Output，或在没有输入源时让 `read` 返回 R010；
 - 宿主 value 函数不要求是纯函数；`FunctionHandler` 仍不接收 `Output` 参数，`read` 通过 ReferenceHost 捕获的 Output 输出提示。
 
+### 7.7 宿主运行时上下文（0.4.0）
+
+宿主函数调用 callable 时使用非拥有的运行时上下文：
+
+- `CallContext` 增加 `EvalContext* runtime`；`CommandContext` 增加 `EvalContext* runtime`；
+- `FunctionHandler` 增加第三个参数 `EvalContext&`；`CommandHandler` 保持原签名，通过 `CommandContext.runtime` 取得运行时；
+- `runtime` 只在本次调用期间有效，宿主不得保存指针/引用；
+- 宿主/用户函数在 runtime 缺失时返回 R010（位置在 callee）；
+- `finishSession()` 会构造并传入 runtime；
+- 宿主调用 callable 使用统一 helper，以正确设置 Source、参数 span 和递归深度；`callable` type token 不可调用（R012）。
+
 ---
 
 ## 8. 内建
 
 ### 8.1 函数（一等 callable）
 
-以下都是 callable 值，可以存进变量/list、作为参数传递；它们的类型都是 `type`。
+以下都是 invocable callable 值，可以存进变量/list、作为参数传递；它们的运行时类型都是 `callable`，`callable` token 只用于类型表征。
 
 | 名称 | 签名 | 说明 |
 |---|---|---|
@@ -1180,10 +1214,10 @@ LINE (0, 0) (1, 1)
 | `string` | `(any)` | 按第 9 节格式化为 string；`str` 是同一 callable 的别名 |
 | `list` | `(list\|string\|point)` | list 深拷贝；string 逐码点；point 取坐标；其它 R002 |
 | `point` | `(v)` / `(x,y)` / `(x,y,z)` | 由 list/Point 复制，或由数值构造 |
-| `type` | `(any)` | 返回该值的类型构造器；callable → `type` |
+| `type` | `(any)` | 数据值返回类型构造器；任何 invocable callable 或 `callable` token 返回 `callable` token |
 | `len` | `(list\|string\|point)` | list 长度、string 码点数、point 维度 |
 
-用于补全的静态返回类型：`int` → int，`double` → double，`bool` → bool，`string`/`str` → string，`list` → list，`point` → point（维度未知），`type` → callable，`len` → int；`echo` 是 void 命令。这些返回类型是静态元数据，不改变本表的运行时语义。
+用于补全的静态返回类型：`int` → int，`double` → double，`bool` → bool，`string`/`str` → string，`list` → list，`point` → point（维度未知），`type` → unknown/`TypeToken`，`len` → int；`echo` 是 void 命令。这些返回类型是静态元数据，不改变本表的运行时语义。
 
 数值字符串转换规则（`int(string)` / `double(string)`）：
 
@@ -1198,7 +1232,7 @@ LINE (0, 0) (1, 1)
 
 语句位置的 builtin 函数调用同样合法，返回值丢弃：`int 1`、`point 1 2`、`len [1,2]` 都是合法语句；`int 1 2` 是 S002（位置在命令名）。`echo` 是命令而不是 value 函数，仍只能作为语句。
 
-`type` 的返回值就是对应的 callable 本身：
+`type` 对数据值返回对应的类型构造器，对所有 invocable callable 返回 `callable` token：
 
 ```lush
 type(4.4) == double      # true
@@ -1208,9 +1242,14 @@ type("a") == string      # true
 type(true) == bool       # true
 type([1]) == list        # true
 type((1,2)) == point     # true
-type(len) == type        # true
-type(type) == type       # true
+type(int) == callable     # true
+type(len) == callable     # true
+type(read) == callable    # true
+type(type) == callable    # true
+type(callable) == callable # true
 ```
+
+`callable` 是 type token，不是构造器：`callable(1)` 报 R012，不会转换任何值。
 
 `bool(v)` 是**显式转换**，不改变 4.8 的规则：`if (0)` 仍然 R002，必须写 `if (bool(0))`。
 
@@ -1238,7 +1277,8 @@ type(type) == type       # true
 | string | 顶层原样；嵌套加引号并转义 | `abc`、`["a", "b"]` |
 | point | `(x, y)` 或 `(x, y, z)` | `(1, 2)` |
 | list | `[a, b, c]`，空为 `[]` | `[1, [2, 3]]` |
-| callable（`type` 值） | callable 的名字 | `int`、`double`、`len` |
+| callable（invocable `type` 值） | callable 的名字 | `int`、`double`、`len` |
+| callable（type token） | `callable` | `callable` |
 
 - double 使用最短可往返表示；科学计数法统一为 `e` + 符号 + 十进制数字，指数不补前导零（`1e+20`、`1e-7`）；
 - `echo a b c` 输出 `a b c\n`；
@@ -1255,7 +1295,7 @@ type(type) == type       # true
 
 1. 词法 + 语法 + 校验整个程序；
 2. 任一阶段出错 → 不执行任何语句，返回第一个错误；
-3. 校验通过后收集全部顶层 `def`，安装函数值并提升到 callable 命名空间；函数体延迟到调用时执行；
+3. 校验通过后收集全部顶层 `def`，安装到 `Env` 的 `FunctionTable` 并提升到 callable 命名空间；函数体延迟到调用时执行；
 4. 顺序执行语句；
 5. 运行时错误（包括宿主命令失败 R010）立即中止，已产生的输出与命令副作用保留；
 6. EOF 时仍有未闭合的 `{`/`(`/`[` → P002。
@@ -1266,11 +1306,12 @@ type(type) == type       # true
 
 ### 10.2 行模式 / REPL
 
-- Env 跨行保留；顶层用户函数定义也跨行保留，函数值拥有函数体 AST 和 Source 句柄。
+- Env 跨行保留；`Env` 同时持有 `FunctionTable` 和 `SourceTable`，顶层用户函数定义也跨行保留，函数值拥有函数体 AST 和 Source 句柄。
+- SourceTable 保留全部源码直到 Env 销毁；REPL 行完成后不再清空 Source 表，旧函数的 SourceId 仍可解析。
 - 解析器在 Repl 模式下返回 `Incomplete`，原因与优先级为：
   1. 已经出现的确定性错误（不是“输入末尾缺少 token”的 P001/P003/P005/S004/S009/L004 等）优先，直接返回 `Error`；`a = ref` 这种仅因 RHS 在末尾缺失而产生的 S004 可被尾随续行 defer；
   2. `Unclosed*`：输入末尾仍有未闭合的 `{`/`(`/`[`；多个未闭合时取**最内层**的类型；
-  3. `NeedStatement`：`if` / `while` / `for` / `for-in` / `else` 的控制头已经完整，但缺少 body；
+  3. `NeedStatement`：`if` / `while` / `for` / `for-in` / `else` / `def` 的控制头已经完整，但缺少 body；
   4. `TrailingContinuation`：最后一个被删除的合法续行之后没有产生任何**非 NL** token；注释、空白行、注释行产生的 NL 都不算。包括 `\` 位于 EOF（L005）、`\` 后只有水平空白/注释/空行，或最后一行以 `\` 后跟零个或多个水平空白结束；
   5. 以上都不是时，按普通结束错误处理：缺少表达式是 P002（位置在显式语句终止符或 EOF）；`a = ref` 缺少 RHS 仍是 S004。显式终止符上的 P002/S004 只有在没有尾随续行时才会走到这里。
 - `endsWithContinuation` 由 Lexer 提供：最后一个合法续行之后没有非 NL token 时为 true；L005 也置 true。LexResult 同时提供 `lastContinuationOffset`（最后一个被删除合法续行的原始 offset；L005 是反斜杠 offset；没有则为 npos）。
@@ -1285,7 +1326,7 @@ type(type) == type       # true
 - 当前是 `UnclosedBrace` / `UnclosedParen` / `UnclosedBracket`：空白行是合法空白，追加到缓冲区，继续等待。
 - 只有注释的行不算空白行；它被追加，并继续保持当前 `Incomplete` 状态。
 - 顶层没有待完成输入时，空行是空语句。
-- 空 body 必须显式写 `;`：`if (a);`、`while (a);`、`for (;;);` 合法；`for (;;);` 执行时会死循环，但这是用户显式写的。
+- 空 body 必须显式写 `;`：`if (a);`、`while (a);`、`for (;;);`、`def f();` 合法；`for (;;);` 执行时会死循环，但这是用户显式写的。`def f()` 后空行则取消定义，不是空 body。
 
 **REPL 结束与取消**
 
@@ -1344,7 +1385,7 @@ type(type) == type       # true
 | 语法 | P006 | 缺少语句终止符 |
 | 校验 | S001 | 未知命令/函数 |
 | 校验 | S002 | 参数个数不符 |
-| 校验 | S003 | 保留名不能用作变量 |
+| 校验 | S003 | 保留名/用户函数名不能用作变量，或 `def` 名与已有变量冲突 |
 | 校验 | S004 | ref 使用位置非法 |
 | 校验 | S005 | break/continue 不在循环内 |
 | 校验 | S006 | 交互命令必须是顶层单条语句 |
@@ -1363,9 +1404,9 @@ type(type) == type       # true
 | 运行时 | R007 | 解引用非引用 |
 | 运行时 | R008 | 引用的引用 |
 | 运行时 | R009 | 浮点 NaN/Inf |
-| 运行时 | R010 | 命令执行失败（宿主） |
+| 运行时 | R010 | 命令执行失败（宿主），或函数调用缺少 runtime |
 | 运行时 | R011 | 用户取消 |
-| 运行时 | R012 | 值不可调用（callee 不是 callable） |
+| 运行时 | R012 | 值不可调用（callee 不是 callable，含 `callable` type token） |
 | 运行时 | R013 | 数值字符串格式/范围非法 |
 | 运行时 | R014 | 值函数执行到末尾仍未返回值 |
 | 运行时 | R015 | 用户函数递归深度超过 1024 |
@@ -1395,7 +1436,7 @@ error[P004]: 命令参数不是合法的表达式
 |---|---|
 | S001 未知命令/函数 | 命令名 |
 | S002 参数个数不符（语句位置） | 命令名 |
-| S003 保留名作为写入/绑定目标 | 该目标的根名字 |
+| S003 保留名/用户函数名作为写入/绑定目标，或 `def` 名与已有变量冲突 | 该目标的根名字 / 函数名 |
 | S004 非法 `ref` | `ref` 关键字（Parser） |
 | S005 `break`/`continue` 不在循环内 | 关键字 |
 | S006 交互命令不能进入会话 | 命令名 |
@@ -1424,8 +1465,8 @@ error[P004]: 命令参数不是合法的表达式
 | R007 解引用非引用 | `*` |
 | R008 引用的引用/自引用 | 源是 ref 时用源变量名；目标有 inbound ref 时用目标名 |
 | R009 浮点 NaN/Inf | 运算符 |
-| R012 值不可调用 | callee 表达式 |
-| R010 命令执行失败（宿主） | 语句位置为命令名；表达式位置调用宿主函数时为 callee；宿主可提供更精确的 Span |
+| R012 值不可调用（含 `callable` type token） | callee 表达式 |
+| R010 命令执行失败（宿主）/缺少 runtime | 语句位置为命令名；表达式位置调用宿主或用户函数时为 callee；宿主可提供更精确的 Span |
 | R011 用户取消 | 会话必选参数收到空输入时，当前输入的空位置；Source 为当前会话输入。显式 `cancel()`、EOF、Ctrl+C 返回 CANCELLED，不产生 R011 |
 | R013 数值字符串非法 | 违规字符串参数；缺省为 callee |
 | R014 值函数缺少返回值 | 函数体结束位置（body 闭括号或单语句结束位置） |
@@ -1443,7 +1484,8 @@ error[P004]: 命令参数不是合法的表达式
 
 ### 12.1 输入、光标与替换
 
-- 输入是当前完整缓冲区、原始文本字节偏移 `cursor`、当前 `Env`、当前可调用体注册表和可选的会话 `NeedInput`；REPL 的 pending 文本由调用方拼接。
+- 输入是当前完整缓冲区、原始文本字节偏移 `cursor`、只读 `CompletionScope`、当前可调用体注册表和可选的会话 `NeedInput`；REPL 的 pending 文本由调用方拼接。
+- `CompletionScope` 提供全局变量、当前函数参数/函数局部作用域和当前用户函数签名；它不修改真实 `Env`，也不暴露调用点局部变量。
 - 只分析 `[0, cursor)`；cursor 超出范围、位于字符串/注释/数字字面量中、或前缀存在词法错误时，返回空候选，不产生诊断。
 - cursor 紧接 Identifier 时，用 token 起点到 cursor 的文本做前缀匹配，并替换整个当前 token；cursor 在空白、分隔符或运算符后时，替换空 span。
 - cursor 紧接一个已完成的表达式且没有空白时，不做命令参数补全，避免替换已输入的表达式。
@@ -1476,14 +1518,14 @@ error[P004]: 命令参数不是合法的表达式
 候选来源：
 
 - 关键字；
-- 当前 `Env` 的可见变量；
-- 已注册命令和函数；
-- 类型构造器；
+- `CompletionScope` 中的全局变量、函数参数和函数局部变量；
+- `Env`/`FunctionTable` 中已注册的命令和用户函数；
+- 类型构造器和 `callable` type token；
 - 字面量模板；
 - 成员；
 - 会话当前参数。
 
-关键字按上下文提供：语句开头提供 `if` / `while` / `for` / `break` / `continue` / `def`，`else` 仅在 `}` 后，`in` 仅在 `for <IDENT>` 后，`return` 仅在函数体内；表达式提供 `true` / `false`。用户函数候选来自当前 callable 命名空间和 `Env` 中的函数值；签名包含参数名/类型/必选性和返回类型。
+关键字按上下文提供：语句开头提供 `if` / `while` / `for` / `break` / `continue` / `def`，`else` 仅在 `}` 后，`in` 仅在 `for <IDENT>` 后，`return` 仅在函数体内；表达式提供 `true` / `false`。用户函数候选来自 `Env` 的 `FunctionTable`，签名包含参数名/类型/必选性和返回类型；`callable` token 作为类型名参与类型注解补全，不作为可调用函数候选。
 
 字面量模板：
 
@@ -1502,7 +1544,7 @@ error[P004]: 命令参数不是合法的表达式
 - 关键字、命令/函数/类型构造器名、别名：大小写不敏感前缀匹配；
 - 变量：大小写敏感前缀匹配；成员：大小写敏感前缀匹配；
 - 命令参数按 §7.2 的类型/维度过滤：`int` → int；`number` → int/double；`point` → 维度匹配的 point 或可转换的 list；`string`/`bool`/`list` → 对应值；`any` → 所有变量，并额外列出 callable；
-- 用户函数参数按 §3.10 过滤：`int` → int；`double` → int/double；`point2`/`point3` → 对应维度的 point，不接受 list；`any` → 所有变量，并额外列出 callable；`callable` → callable 变量；
+- 用户函数参数按 §3.10 过滤：`int` → int；`double` → int/double；`point2`/`point3` → 对应维度的 point，不接受 list；`any` → 所有变量，并额外列出 callable；`callable` → invocable callable 变量，不列 type token；
 - 类型不匹配的变量仍显示，但标记 `typeMismatch` 并排在兼容项之后，附类型标签；
 - 补全不得改变语义：在 `line 1,2 ` 处应建议 Point 类型变量与 `(`，而不是数字。
 
@@ -1541,6 +1583,9 @@ error[P004]: 命令参数不是合法的表达式
 
 - `def` / `return` 在 0.4.0 起启用；S007 废弃。
 - 用户函数第一版限制：只允许顶层定义；无闭包、无嵌套 `def`、无默认参数、无变参参数；无用户自定义类型。
+- 0.4.0 的 `FunctionTable` 和 `SourceTable` 归 `Env` 所有；Source 保留到 Env 销毁。
+- `callable` 是 `ValueType::TypeToken`，不是可调用值；函数/内建/宿主 callable 共享该 type token。
+- `CompletionScope` 是补全的只读作用域，不修改 `Env`。
 - 未来扩展方向：闭包、模块、异常、插件注册、写时复制、编辑器增量分析、错误恢复。
 - 明确不加：`as` 后缀转换、隐式数值/字符串转换、多行字符串、块注释。
 - 编辑器分析接口（M10）与 CLI Tab（M9）不是执行路径语义；它们只在宿主/CLI 适配层消费 token/trivia/span。
@@ -2179,21 +2224,23 @@ true
 [int, len]
 ```
 
-### G42 type 是元类型
+### G42 type 与 callable token
 
 ```lush
 echo type(len)
 echo type(int)
 echo type(type)
 echo type(type(1))
+echo (type(int) == callable)
 echo (type(1) == type)
 ```
 
 ```text
-type
-type
-type
-type
+callable
+callable
+callable
+callable
+true
 false
 ```
 
@@ -2423,7 +2470,7 @@ primary     = INT | BOUNDARY_INT | FLOAT | STRING | "true" | "false"
 10. `ref` 与右侧 `IDENT` 必须在同一逻辑行；普通换行会终止语句并报 S004，显式 `\` 续行除外；Repl 的尾随续行可返回 `Incomplete`；
 11. 空语句 `;` 可以作为控制语句 body；额外的 `;` 是 EmptyStmt，会打断 `else`；
 12. 括号分组对可赋值性透明：`(x)++` 合法；
-13. 语句位置只允许 block/if/while/for/break/continue/赋值/命令；单独的 `(`、`[`、字面量等是 P001；
+13. 语句位置只允许 block/if/while/for/break/continue/def/return/赋值/命令；单独的 `(`、`[`、字面量等是 P001；
 14. 紧贴 `.` 后必须是 `IDENT`；否则 P004 在 `.`（`.` 后直接是终止符/EOF 时 P002）；
 15. `BoundaryInt` 只在单目 `-` 的直接操作数中合法，其它位置 L004；`++`/`--` 的 S009 位置在运算符；
 16. `defStmt` 只允许出现在程序顶层；嵌套 `def` 是 S011；顶层 `def` 在执行前收集并提升；
@@ -2431,6 +2478,10 @@ primary     = INT | BOUNDARY_INT | FLOAT | STRING | "true" | "false"
 18. `return` 只能出现在用户函数体内；`return expr` 只能出现在值函数，`return;` 只能出现在 void 函数；违反为 S010/S012；
 19. 用户函数名、内建名和命令名共用 callable 命名空间，大小写不敏感；语句位置 `f 1 2` 是并置调用，表达式位置 `f(1,2)` 是后缀调用；
 20. 用户函数参数不支持 list → point 隐式转换；返回只允许 int → double 提升。
+21. `callable` 是 `ValueType::TypeToken`，不是 invocable callable；`type(任意 invocable callable) == callable`，`callable(1)` 为 R012。
+22. `def f()` 的 body 从下一条语句开始；空行取消 body（REPL Cancelled，脚本 P002）；注释行不取消；`;` 是空 body。
+23. 函数名大小写不敏感；变量/参数名大小写敏感；`def Foo` 遇到变量 `foo` 是 S003，变量目标与函数名冲突是 S003；参数/函数/保留名冲突是 S011。
+24. `Env` 持有 `FunctionTable` 和 `SourceTable`；Source 保留到 Env 销毁；函数值拥有 AST + Source。
 
 ---
 
@@ -2445,3 +2496,5 @@ primary     = INT | BOUNDARY_INT | FLOAT | STRING | "true" | "false"
 5. 是否在补全中引入 tree-sitter 之类的外部增量解析（当前不需要）。
 6. 宿主编辑器分析的正式 API 形状（trivia、未完成 token、错误 span、UTF-8 位置映射）在 M10 定稿。
 7. `replxx` 之外是否还需要 Windows 原生行编辑后端；当前只计划 vendored replxx。
+8. `CompletionScope` 的最终公开字段和构造方式在 M8c 定稿。
+9. `TypeToken` 的内部表示（独立值类型/单例 token）在 M8a 定稿，但语义已固定。
