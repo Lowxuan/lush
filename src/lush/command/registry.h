@@ -36,6 +36,7 @@ enum class RegistrationError {
     EmptyHandler,
 };
 
+// 宿主注册结果；失败是宿主编程错误，不产生语言诊断。
 struct RegistrationResult {
     std::optional<RegistrationError> error;
     std::string message;
@@ -55,12 +56,17 @@ struct ParamBindResult {
 
 ParamBindResult bindParam(const ParamSpec& param, const core::Value& value);
 
+// 注册后的不可变 callable 描述；命令与值函数最多有一个 handler 有效。
 struct RegisteredCallable {
     Signature signature;
     CommandHandler commandHandler;
     FunctionHandler functionHandler;
 };
 
+// 命令/值函数注册表，同时作为 NameCatalog 暴露给校验和求值。
+//
+// 注册时把 CommandSpec 校验成 Signature；命令和值函数共享大小写不敏感
+// 的命名空间。Registry 拥有注册后的 callable，宿主不得保存内部指针。
 class Registry final : public core::NameCatalog {
 public:
     Registry() = default;

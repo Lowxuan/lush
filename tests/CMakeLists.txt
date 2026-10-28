@@ -1,6 +1,7 @@
 add_executable(lush_tests
     test_main.cpp
     unit_smoke.cpp
+    unit_text.cpp
     unit_lexer.cpp
     unit_parser.cpp
     unit_value.cpp

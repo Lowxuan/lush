@@ -2,7 +2,16 @@
 
 #include "lush/core/builtins.h"
 #include "lush/core/checked.h"
+#include "lush/core/text.h"
 #include "lush/core/utf8.h"
+
+// 树遍历求值实现。
+//
+// 关键不变量：
+//   - 普通赋值 target-first；目标中的后缀 ++/-- 延迟到写入后提交；
+//   - ref 与 for init 例外，RHS-first；
+//   - 读取/赋值默认深拷贝，ref 是唯一别名；
+//   - eval 只接受已 validate 的 AST，运行时错误统一 R*。
 
 #include <cmath>
 #include <cstddef>
@@ -17,12 +26,14 @@
 namespace lush::core {
 namespace {
 
+// 语句执行后的控制流；M8b 会增加 Return 并把函数返回值一起带出。
 enum class Flow {
     Normal,
     Break,
     Continue,
 };
 
+// 表达式求值结果：值或诊断二选一。
 struct EvalExprResult {
     std::optional<Value> value;
     std::optional<Diagnostic> diagnostic;
@@ -32,6 +43,7 @@ struct EvalExprResult {
     }
 };
 
+// 语句求值结果：控制流 + 可选诊断；Normal 且无诊断表示继续。
 struct EvalFlowResult {
     Flow flow = Flow::Normal;
     std::optional<Diagnostic> diagnostic;
@@ -49,11 +61,14 @@ enum class StepKind {
     PointZ,
 };
 
+// 赋值路径中的一步：list/point 索引或具名坐标。
 struct Step {
     StepKind kind = StepKind::ListIndex;
     std::size_t index = 0;
 };
 
+// 已解析的赋值目标：根 Cell + 后续 list/point 索引路径。
+// createOnWrite 表示普通赋值允许在当前 scope 新建简单变量。
 struct LValue {
     Span span{};
     bool simpleVariable = false;
@@ -64,6 +79,7 @@ struct LValue {
     std::vector<Step> path;
 };
 
+// 目标解析结果：LValue 或 R* 诊断。
 struct TargetResult {
     std::optional<LValue> lvalue;
     std::optional<Diagnostic> diagnostic;
@@ -108,33 +124,6 @@ EvalFlowResult makeFlowError(Diagnostic diagnostic) {
     EvalFlowResult result;
     result.diagnostic = std::move(diagnostic);
     return result;
-}
-
-std::string actualTypeName(const Value& value) {
-    if (value.isCallable() || value.isTypeToken()) {
-        return "callable";
-    }
-    return std::string(valueTypeName(value.type()));
-}
-
-bool equalsIgnoreCaseName(std::string_view left, std::string_view right) {
-    if (left.size() != right.size()) {
-        return false;
-    }
-    for (std::size_t index = 0; index < left.size(); ++index) {
-        char a = left[index];
-        char b = right[index];
-        if (a >= 'A' && a <= 'Z') {
-            a = static_cast<char>(a - 'A' + 'a');
-        }
-        if (b >= 'A' && b <= 'Z') {
-            b = static_cast<char>(b - 'A' + 'a');
-        }
-        if (a != b) {
-            return false;
-        }
-    }
-    return true;
 }
 
 bool isNumeric(const Value& value) {
@@ -268,6 +257,9 @@ bool compareOrderValues(const Value& left, const Value& right, int& comparison) 
     return false;
 }
 
+// 单次求值器；持有 EvalContext 的引用，不跨调用保存。
+// evalNode 处理语句/控制流，evalExpr 处理表达式，二者共享临时状态
+// deferPostfix_（目标路径后缀延迟提交）。
 class Evaluator {
 public:
     explicit Evaluator(EvalContext& context) : context_(context) {}
@@ -276,6 +268,7 @@ public:
         return evalExpr(expression);
     }
 
+    // 执行语句并返回控制流（Normal/Break/Continue）或 R* 诊断。
     EvalFlowResult evalNode(const Node& node) {
         switch (node.kind()) {
         case NodeKind::Program: {
@@ -308,7 +301,7 @@ public:
             if (!cond.value->isBool()) {
                 return makeFlowError(makeDiagnostic(
                     ErrorCode::R002, ifStatement.cond->span,
-                    "条件必须是 bool，实际为 " + actualTypeName(*cond.value)));
+                    "条件必须是 bool，实际为 " + runtimeTypeName(*cond.value)));
             }
             if (cond.value->asBool()) {
                 return evalNode(*ifStatement.thenBranch);
@@ -329,7 +322,7 @@ public:
                     return makeFlowError(makeDiagnostic(
                         ErrorCode::R002, whileStatement.cond->span,
                         "条件必须是 bool，实际为 " +
-                            actualTypeName(*cond.value)));
+                            runtimeTypeName(*cond.value)));
                 }
                 if (!cond.value->asBool()) {
                     break;
@@ -381,7 +374,7 @@ public:
                         return makeFlowError(makeDiagnostic(
                             ErrorCode::R002, forStatement.cond->span,
                             "条件必须是 bool，实际为 " +
-                                actualTypeName(*cond.value)));
+                                runtimeTypeName(*cond.value)));
                     }
                     if (!cond.value->asBool()) {
                         break;
@@ -435,7 +428,7 @@ public:
                 return makeFlowError(makeDiagnostic(
                     ErrorCode::R002, forIn.iterable->span,
                     "for-in 只能迭代 list 或 string，实际为 " +
-                        actualTypeName(*iterable.value)));
+                        runtimeTypeName(*iterable.value)));
             }
 
             [[maybe_unused]] auto scope = context_.env.pushScope();
@@ -464,11 +457,13 @@ public:
         case NodeKind::Command:
             return evalCommand(static_cast<const Command&>(node));
         case NodeKind::Def:
-            // M8a installs signatures only; execution is M8b.
+            // M8a：只安装签名，不执行 body；M8b 改为创建 UserFunction。
             context_.env.functions().insert(
                 static_cast<const Def&>(node).signature, true);
             return makeFlow();
         case NodeKind::Return:
+            // 正常路径不应到达：validate 已限制 return 在函数体内，而 M8a
+            // 尚不执行 body。保留 S010 兜底。
             return makeFlowError(makeDiagnostic(
                 ErrorCode::S010, node.span, "return 只能出现在函数体内"));
         case NodeKind::EmptyStmt:
@@ -480,6 +475,7 @@ public:
     }
 
 private:
+    // 表达式分派；调用者负责先保证 AST 已校验。
     EvalExprResult evalExpr(const Expr& expression) {
         switch (expression.kind()) {
         case NodeKind::Int:
@@ -527,8 +523,10 @@ private:
         }
     }
 
+    // 变量读取顺序：内建 callable token → Env 变量 → 内建 callable
+    // （int/len/type 等）。callable 不是 Env 变量，因此需要前置特判。
     EvalExprResult evalVariable(const Variable& variable) {
-        if (equalsIgnoreCaseName(variable.name.text, "callable")) {
+        if (asciiEqualsIgnoreCase(variable.name.text, "callable")) {
             return makeValue(Value::makeTypeToken());
         }
 
@@ -568,7 +566,7 @@ private:
                 return makeExprError(
                     ErrorCode::R002, unary.opSpan,
                     "! 的操作数必须是 bool，实际为 " +
-                        actualTypeName(*operand.value));
+                        runtimeTypeName(*operand.value));
             }
             return makeValue(Value::makeBool(!operand.value->asBool()));
         }
@@ -608,7 +606,7 @@ private:
         case ValueType::TypeToken:
             return makeExprError(
                 ErrorCode::R002, unary.opSpan,
-                "一元 - 不支持 " + actualTypeName(*operand.value));
+                "一元 - 不支持 " + runtimeTypeName(*operand.value));
         }
         return makeExprError(ErrorCode::R002, unary.opSpan,
                              "一元 - 不支持该类型");
@@ -626,7 +624,7 @@ private:
                 return makeExprError(
                     ErrorCode::R002, binary.opSpan,
                     "逻辑运算的操作数必须是 bool，实际为 " +
-                        actualTypeName(*left.value));
+                        runtimeTypeName(*left.value));
             }
 
             if (binary.op == BinaryOp::LogicalAnd &&
@@ -646,7 +644,7 @@ private:
                 return makeExprError(
                     ErrorCode::R002, binary.opSpan,
                     "逻辑运算的操作数必须是 bool，实际为 " +
-                        actualTypeName(*right.value));
+                        runtimeTypeName(*right.value));
             }
             return makeValue(Value::makeBool(right.value->asBool()));
         }
@@ -707,8 +705,8 @@ private:
             }
             return makeExprError(ErrorCode::R002, opSpan,
                                  "类型不匹配：无法相加 " +
-                                     actualTypeName(left) + " 与 " +
-                                     actualTypeName(right));
+                                     runtimeTypeName(left) + " 与 " +
+                                     runtimeTypeName(right));
         case BinaryOp::Subtract:
             if (left.isInt() && right.isInt()) {
                 std::int64_t result = 0;
@@ -749,8 +747,8 @@ private:
             }
             return makeExprError(ErrorCode::R002, opSpan,
                                  "类型不匹配：无法相减 " +
-                                     actualTypeName(left) + " 与 " +
-                                     actualTypeName(right));
+                                     runtimeTypeName(left) + " 与 " +
+                                     runtimeTypeName(right));
         case BinaryOp::Multiply:
             if (left.isInt() && right.isInt()) {
                 std::int64_t result = 0;
@@ -800,8 +798,8 @@ private:
             }
             return makeExprError(ErrorCode::R002, opSpan,
                                  "类型不匹配：无法相乘 " +
-                                     actualTypeName(left) + " 与 " +
-                                     actualTypeName(right));
+                                     runtimeTypeName(left) + " 与 " +
+                                     runtimeTypeName(right));
         case BinaryOp::Divide:
             if (left.isInt() && right.isInt()) {
                 if (right.asInt() == 0) {
@@ -847,8 +845,8 @@ private:
             }
             return makeExprError(ErrorCode::R002, opSpan,
                                  "类型不匹配：无法相除 " +
-                                     actualTypeName(left) + " 与 " +
-                                     actualTypeName(right));
+                                     runtimeTypeName(left) + " 与 " +
+                                     runtimeTypeName(right));
         case BinaryOp::Modulo:
             if (!left.isInt() || !right.isInt()) {
                 return makeExprError(ErrorCode::R002, opSpan,
@@ -871,8 +869,8 @@ private:
             if (!compareEqualValues(left, right, equal)) {
                 return makeExprError(ErrorCode::R002, opSpan,
                                      "类型不匹配：无法比较 " +
-                                         actualTypeName(left) + " 与 " +
-                                         actualTypeName(right));
+                                         runtimeTypeName(left) + " 与 " +
+                                         runtimeTypeName(right));
             }
             if (op == BinaryOp::NotEqual) {
                 equal = !equal;
@@ -887,8 +885,8 @@ private:
             if (!compareOrderValues(left, right, comparison)) {
                 return makeExprError(ErrorCode::R002, opSpan,
                                      "类型不匹配：无法排序比较 " +
-                                         actualTypeName(left) + " 与 " +
-                                         actualTypeName(right));
+                                         runtimeTypeName(left) + " 与 " +
+                                         runtimeTypeName(right));
             }
             bool result = false;
             switch (op) {
@@ -915,7 +913,7 @@ private:
         if (!cond.value->isBool()) {
             return makeExprError(
                 ErrorCode::R002, ternary.cond->span,
-                "条件必须是 bool，实际为 " + actualTypeName(*cond.value));
+                "条件必须是 bool，实际为 " + runtimeTypeName(*cond.value));
         }
         if (cond.value->asBool()) {
             return evalExpr(*ternary.thenExpr);
@@ -923,6 +921,7 @@ private:
         return evalExpr(*ternary.elseExpr);
     }
 
+    // 先从左到右求值 callee 和全部实参，再统一调用；非 callable 返回 R012。
     EvalExprResult evalCall(const Call& call) {
         EvalExprResult callee = evalExpr(*call.callee);
         if (!callee.ok()) {
@@ -931,7 +930,7 @@ private:
         if (!callee.value->isCallable()) {
             return makeExprError(
                 ErrorCode::R012, call.callee->span,
-                actualTypeName(*callee.value) + " 不可调用");
+                runtimeTypeName(*callee.value) + " 不可调用");
         }
 
         std::vector<Value> arguments;
@@ -977,7 +976,7 @@ private:
             return makeExprError(
                 ErrorCode::R002, index.index->span,
                 "索引必须是 int，实际为 " +
-                    actualTypeName(*position.value));
+                    runtimeTypeName(*position.value));
         }
 
         const std::int64_t rawIndex = position.value->asInt();
@@ -1021,7 +1020,7 @@ private:
         case ValueType::TypeToken:
             return makeExprError(
                 ErrorCode::R002, index.index->span,
-                actualTypeName(*receiver.value) + " 不可索引");
+                runtimeTypeName(*receiver.value) + " 不可索引");
         }
         return makeExprError(ErrorCode::R002, index.index->span,
                              "不可索引");
@@ -1067,7 +1066,7 @@ private:
 
         return makeExprError(
             ErrorCode::R002, member.member.span,
-            actualTypeName(*receiver.value) + " 没有成员 " +
+            runtimeTypeName(*receiver.value) + " 没有成员 " +
                 member.member.text);
     }
 
@@ -1087,7 +1086,7 @@ private:
             return makeExprError(
                 ErrorCode::R002, incDec.opSpan,
                 "++/-- 的目标必须是 int，实际为 " +
-                    actualTypeName(*current.value));
+                    runtimeTypeName(*current.value));
         }
 
         const std::int64_t oldValue = current.value->asInt();
@@ -1162,7 +1161,7 @@ private:
                 return makeExprError(
                     ErrorCode::R006, point.coordinates[index]->span,
                     "Point 坐标必须是数值，实际为 " +
-                        actualTypeName(*value.value));
+                        runtimeTypeName(*value.value));
             }
             result.coordinates[index] = coordinate;
         }
@@ -1182,6 +1181,7 @@ private:
         return makeValue(Value::makeList(ListValue(std::move(items))));
     }
 
+    // 普通赋值 target-first：先解析目标，再求 RHS；目标后缀延迟提交。
     EvalFlowResult evalAssign(const Assign& assign) {
         const bool previousDefer = deferPostfix_;
         deferPostfix_ = true;
@@ -1280,6 +1280,7 @@ private:
         return makeFlow();
     }
 
+    // 把赋值/ref 目标解析为 LValue；allowCreate 决定未知简单变量是否可建。
     TargetResult resolveTarget(const Expr& expression, bool allowCreate) {
         return resolveTargetExpr(expression, allowCreate);
     }
@@ -1368,7 +1369,7 @@ private:
                 std::nullopt,
                 makeDiagnostic(ErrorCode::R002, index.index->span,
                                "索引必须是 int，实际为 " +
-                                   actualTypeName(*position.value))};
+                                   runtimeTypeName(*position.value))};
         }
 
         const std::int64_t rawIndex = position.value->asInt();
@@ -1418,7 +1419,7 @@ private:
         return TargetResult{
             std::nullopt,
             makeDiagnostic(ErrorCode::R002, index.index->span,
-                           actualTypeName(*current.value) + " 不可索引")};
+                           runtimeTypeName(*current.value) + " 不可索引")};
     }
 
     TargetResult resolveMemberTarget(const Member& member) {
@@ -1481,7 +1482,7 @@ private:
         return TargetResult{
             std::nullopt,
             makeDiagnostic(ErrorCode::R002, member.member.span,
-                           actualTypeName(*current.value) + " 没有成员 " +
+                           runtimeTypeName(*current.value) + " 没有成员 " +
                                member.member.text)};
     }
 
@@ -1646,7 +1647,7 @@ private:
                 return makeDiagnostic(
                     ErrorCode::R002, rhsSpan,
                     "point 分量必须是数值，实际为 " +
-                        actualTypeName(value));
+                        runtimeTypeName(value));
             }
             point[step.index] = coordinate;
             return std::nullopt;

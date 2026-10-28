@@ -1,5 +1,6 @@
 #include "lush/core/lexer.h"
 
+#include "lush/core/text.h"
 #include "lush/core/utf8.h"
 
 #include <charconv>
@@ -8,6 +9,10 @@
 #include <system_error>
 #include <utility>
 
+// 词法分析实现。
+//
+// buildLogicalText 先删除反斜杠续行并维护 logical→physical 偏移映射；
+// token 文本使用逻辑文本，Token/Span 偏移始终指向原始物理 Source。
 namespace lush::core {
 namespace {
 
@@ -27,38 +32,19 @@ bool isIdentifierContinue(char value) noexcept {
     return isIdentifierStart(value) || isDigit(value);
 }
 
-char asciiLower(char value) noexcept {
-    if (value >= 'A' && value <= 'Z') {
-        return static_cast<char>(value - 'A' + 'a');
-    }
-    return value;
-}
-
-bool equalsIgnoreCase(std::string_view left, std::string_view right) noexcept {
-    if (left.size() != right.size()) {
-        return false;
-    }
-    for (std::size_t i = 0; i < left.size(); ++i) {
-        if (asciiLower(left[i]) != asciiLower(right[i])) {
-            return false;
-        }
-    }
-    return true;
-}
-
 TokenKind keywordKind(std::string_view text) noexcept {
-    if (equalsIgnoreCase(text, "if")) return TokenKind::KwIf;
-    if (equalsIgnoreCase(text, "else")) return TokenKind::KwElse;
-    if (equalsIgnoreCase(text, "while")) return TokenKind::KwWhile;
-    if (equalsIgnoreCase(text, "for")) return TokenKind::KwFor;
-    if (equalsIgnoreCase(text, "in")) return TokenKind::KwIn;
-    if (equalsIgnoreCase(text, "true")) return TokenKind::KwTrue;
-    if (equalsIgnoreCase(text, "false")) return TokenKind::KwFalse;
-    if (equalsIgnoreCase(text, "ref")) return TokenKind::KwRef;
-    if (equalsIgnoreCase(text, "break")) return TokenKind::KwBreak;
-    if (equalsIgnoreCase(text, "continue")) return TokenKind::KwContinue;
-    if (equalsIgnoreCase(text, "def")) return TokenKind::KwDef;
-    if (equalsIgnoreCase(text, "return")) return TokenKind::KwReturn;
+    if (asciiEqualsIgnoreCase(text, "if")) return TokenKind::KwIf;
+    if (asciiEqualsIgnoreCase(text, "else")) return TokenKind::KwElse;
+    if (asciiEqualsIgnoreCase(text, "while")) return TokenKind::KwWhile;
+    if (asciiEqualsIgnoreCase(text, "for")) return TokenKind::KwFor;
+    if (asciiEqualsIgnoreCase(text, "in")) return TokenKind::KwIn;
+    if (asciiEqualsIgnoreCase(text, "true")) return TokenKind::KwTrue;
+    if (asciiEqualsIgnoreCase(text, "false")) return TokenKind::KwFalse;
+    if (asciiEqualsIgnoreCase(text, "ref")) return TokenKind::KwRef;
+    if (asciiEqualsIgnoreCase(text, "break")) return TokenKind::KwBreak;
+    if (asciiEqualsIgnoreCase(text, "continue")) return TokenKind::KwContinue;
+    if (asciiEqualsIgnoreCase(text, "def")) return TokenKind::KwDef;
+    if (asciiEqualsIgnoreCase(text, "return")) return TokenKind::KwReturn;
     return TokenKind::Identifier;
 }
 
@@ -237,6 +223,7 @@ void Lexer::fail(ErrorCode code, std::size_t start, std::size_t end,
     diagnostic_ = Diagnostic{code, spanOf(start, end), std::move(message), std::move(help)};
 }
 
+// 跳过 # 到行尾，并把注释 Span 留给 Parser 判断 def 头后的空行规则。
 void Lexer::scanComment() {
     const std::size_t start = pos_;
     ++pos_;
@@ -536,6 +523,8 @@ void Lexer::scanIllegal() {
          "非法字符：非 ASCII 字符只允许出现在字符串或注释中");
 }
 
+// 扫描运算符：先尝试双字符（==, !=, <=, >=, &&, ||, ++, --, ->），
+// 再回退单字符；非法字符由 scanIllegal 处理。
 bool Lexer::scanOperator() {
     const std::size_t start = pos_;
     enum class Match {
@@ -684,6 +673,7 @@ bool Lexer::scanOperator() {
     return true;
 }
 
+// 扫描整个 Source；emit NL/EOF，记录注释 Span 和续行元数据。
 LexResult Lexer::tokenize() {
     tokens_.clear();
     diagnostic_.reset();

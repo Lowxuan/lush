@@ -4,8 +4,14 @@
 #include <string>
 #include <string_view>
 
+// 词法 token 与稳定显示名。
+//
+// Token.text 是删除续行后的逻辑文本；Token.offset/length 仍指向原始
+// Source 的物理字节范围。String token 的 text 是已解码值，长度可与
+// length 不同。
 namespace lush::core {
 
+// token 类别；关键字块、标点块和运算符块保持固定顺序，dump 依赖名称。
 enum class TokenKind {
     EndOfFile,
     Newline,

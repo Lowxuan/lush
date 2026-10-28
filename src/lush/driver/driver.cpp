@@ -13,9 +13,15 @@
 #include <utility>
 #include <vector>
 
+// REPL/脚本执行状态机实现。
+//
+// 一次输入可能经历：拼接 pending 行 → Lexer → Parser → validate → eval。
+// NeedMore 表示语法输入未完成；NeedInput 表示命令进入交互补参。
+// pendingBuffer 只保存尚未形成完整输入的文本。
 namespace lush::driver {
 namespace {
 
+// 空行/纯水平空白行；REPL 中用于取消未完成的 def body 等。
 bool isBlankLine(std::string_view line) {
     for (char character : line) {
         if (character != ' ' && character != '\t' && character != '\r') {
@@ -152,6 +158,8 @@ DriverResult Driver::finishSession() {
     return DriverResult{};
 }
 
+// 处理已解析程序：决定是否进入会话、做静态校验、会话预求值或执行。
+// allowFunctionRedefinition 在 REPL 中为 true，脚本中为 false。
 DriverResult Driver::processParsed(core::Program& program,
                                   core::SourceId sourceId,
                                   bool allowFunctionRedefinition) {
@@ -230,6 +238,7 @@ DriverResult Driver::processParsed(core::Program& program,
     return DriverResult{};
 }
 
+// 重新解析 pendingBuffer；完整输入交给 processParsed，否则保留 Incomplete。
 DriverResult Driver::parsePendingBuffer() {
     const std::string text = pendingBuffer_;
     core::Source source(text);
@@ -377,6 +386,7 @@ DriverResult Driver::processSessionLine(std::string_view line) {
     return DriverResult{};
 }
 
+// 脚本入口：整体解析、校验，再一次性执行；不进入交互会话。
 DriverResult Driver::runScript(std::string text) {
     const core::SourceId sourceId = sources_.add(text);
     core::Source source(text);
@@ -418,6 +428,7 @@ DriverResult Driver::runScript(std::string text) {
     return clearTerminalState(DriverResult{});
 }
 
+// REPL 行入口；pending 状态下空行会取消输入（取消原因由状态决定）。
 DriverResult Driver::feedLine(std::string_view line) {
     if (session_) {
         return clearTerminalState(processSessionLine(line));

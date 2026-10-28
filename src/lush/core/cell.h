@@ -11,8 +11,17 @@
 #include <utility>
 #include <vector>
 
+// 变量单元与作用域链。
+//
+// Cell 值语义：读取变量得到深拷贝，赋值写回 Cell；ref 是唯一的别名
+// 机制，hasInboundRef 一旦置位就保留（R008）。Env 拥有变量作用域和
+// 用户函数签名表，不拥有 Source（M8b 会迁移）。
 namespace lush::core {
 
+// 单个变量绑定。
+//
+// 普通 Cell 持有 Value；ref Cell 持有目标 Cell 的 shared_ptr。读取 ref
+// 时递归读取目标，写入时由求值器的 LValue 解析目标。
 class Cell : public std::enable_shared_from_this<Cell> {
 public:
     Cell() = default;
@@ -86,8 +95,13 @@ private:
     bool hasInboundRef_ = false;
 };
 
+// 变量作用域链与用户函数签名表。
+//
+// 变量名大小写敏感，查找从最内层 scope 向外；函数名由 FunctionTable
+// 单独做大小写不敏感查找。Env 不可拷贝。
 class Env {
 public:
+    // RAII 作用域守卫：构造时压入 scope，析构时弹出。
     class ScopeGuard {
     public:
         ScopeGuard() = default;
@@ -129,6 +143,7 @@ public:
         return ScopeGuard(*this);
     }
 
+    // 从内向外查找变量；未找到返回空指针。
     std::shared_ptr<Cell> find(std::string_view name) const {
         for (auto it = scopes_.rbegin(); it != scopes_.rend(); ++it) {
             auto found = it->find(std::string(name));
@@ -143,6 +158,7 @@ public:
         return find(name) != nullptr;
     }
 
+    // 在当前最内层 scope 创建值变量。
     std::shared_ptr<Cell> create(std::string_view name, Value value) {
         auto cell = Cell::makeValue(std::move(value));
         scopes_.back()[std::string(name)] = cell;
@@ -159,6 +175,7 @@ public:
         scopes_.back()[std::string(name)] = std::move(cell);
     }
 
+    // 全局用户函数签名表；M8a 只有签名，M8b 起含可执行函数。
     FunctionTable& functions() noexcept {
         return functions_;
     }

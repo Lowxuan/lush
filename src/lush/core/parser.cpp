@@ -5,6 +5,14 @@
 #include "lush/core/lexer.h"
 #include "lush/core/token.h"
 
+// 解析器内部实现。
+//
+// 文件内分为三层：
+//   1. BoundaryInt 的位置校验/规范化（BoundaryValidator/Normalizer）；
+//   2. 递归下降 Parser（语句、命令词、表达式、优先级爬升）；
+//   3. 对外 parse/parseExpression/parseWord/splitCommandWords 包装。
+// 解析阶段只产生 AST 和 P/少量 S004 诊断，不做名称/类型校验。
+
 #include <algorithm>
 #include <charconv>
 #include <cstddef>
@@ -106,6 +114,8 @@ ExprParseResult parseExpressionRange(const LexResult& lex, TokenRange range,
                                      Boundary boundary, ParseOptions options,
                                      bool handleLexDiagnostic);
 
+// 校验 BoundaryInt（INT64_MIN 的边界字面量）只出现在一元负号下。
+// allowBoundary 沿表达式向下传递；一旦离开负号操作数位置就失效。
 class BoundaryValidator {
 public:
     void program(const Program& node) {
@@ -222,6 +232,8 @@ std::optional<Diagnostic> validateBoundary(const Expr& expression) {
     return validator.diagnostic;
 }
 
+// 把合法的 BoundaryInt 转成普通 Int，供后续校验/求值统一处理。
+// 只处理一元负号下的边界字面量；其他位置由 BoundaryValidator 报错。
 class BoundaryNormalizer {
 public:
     void program(const Program& node) {
@@ -322,6 +334,11 @@ void normalizeBoundarySpans(const Expr& expression) {
     normalizer.expr(&expression);
 }
 
+// 单次语法解析的状态机。
+//
+// 使用 token 下标区间 [begin, limit)；lex_ 提供原始 token、注释和 endOffset。
+// 解析器只构造 AST，不拥有 LexResult。options_ 决定 EOF/未闭合结构返回
+// Error 还是 Incomplete；inWord_ 表示当前处于命令参数词内部。
 class Parser {
 public:
     Parser(const LexResult& lex, std::size_t begin, std::size_t limit,
@@ -599,6 +616,8 @@ private:
         return false;
     }
 
+    // 消费语句终止符（NL/;），或接受 `}`/else/EOF 作为隐式终止。
+    // 若下一个 token 看起来像新语句则报 P006。
     bool finishStatement() {
         if (atEnd()) {
             return true;
@@ -623,6 +642,7 @@ private:
         return failUnexpected();
     }
 
+    // 解析一条语句；根据当前 token 分派到 block/控制流/def/return/赋值/命令。
     StmtPtr parseStatement() {
         if (check(TokenKind::LeftBrace)) {
             return parseBlock();
@@ -683,6 +703,8 @@ private:
         return nullptr;
     }
 
+    // 判断 [begin, end) 内是否有注释。
+    // Lexer 不把注释变成 Token，Parser 用它区分 def 头后的纯注释行和空行。
     bool hasCommentBetween(std::size_t begin, std::size_t end) const {
         for (const Span& comment : lex_.comments) {
             if (comment.start >= begin && comment.start < end) {
@@ -692,6 +714,8 @@ private:
         return false;
     }
 
+    // 解析一个必需的类型名（Identifier），写入 type。
+    // 未知类型名仍返回 true，kind=Unknown，由 validate 报 S011。
     bool parseTypeAnnotation(TypeAnnotation& type) {
         if (!check(TokenKind::Identifier)) {
             if (atEnd() || isTerminator(current().kind)) {
@@ -708,6 +732,8 @@ private:
         return true;
     }
 
+    // 解析 `(param: type, ...)` 并写入 signature.params。
+    // 缺逗号、尾随逗号返回 P001；EOF/边界前的缺失返回 P002。
     bool parseFunctionParams(FunctionSignature& signature) {
         if (!check(TokenKind::LeftParen)) {
             if (atEnd() || isTerminator(current().kind)) {
@@ -776,6 +802,10 @@ private:
         }
     }
 
+    // 解析顶层 def 头、可选返回类型和单个 body 语句。
+    // body 可以同行、下一行、block 或 `;` 空语句；连续空行会取消定义：
+    //   脚本 → P002；REPL 由 Driver 在空行输入处取消。
+    // 纯注释行不取消，因此判断空行时需要 LexResult.comments。
     StmtPtr parseDef() {
         const Span defSpan = spanOfToken(current());
         advance();
@@ -844,6 +874,8 @@ private:
         return statement;
     }
 
+    // 解析 return；行尾/`;`/`}`/else 前为 bare return，否则解析表达式。
+    // 返回值与函数返回类型的匹配属于 validate（S012）。
     StmtPtr parseReturn() {
         const Span returnSpan = spanOfToken(current());
         advance();
@@ -2831,6 +2863,8 @@ ExprParseResult parseExpressionRange(const LexResult& lex, TokenRange range,
 
 } // namespace
 
+// 完整程序入口：运行 Parser 并把未闭合/缺 body 的 EOF 转成 P002 或
+// Incomplete（取决于 ParseOptions）。
 ParseResult parse(const LexResult& lex, ParseOptions options) {
     ParseResult result;
 
@@ -2961,6 +2995,8 @@ ExprParseResult parseWord(const LexResult& lex, TokenRange range, WordEnd end,
     return parseWordRange(lex, range, end, options, true);
 }
 
+// 按顶层空白切命令词；括号/方括号内部不切，花括号不抑制 NL 但也不参与
+// 这里的词边界。调用方负责保证 begin/end 位于同一个命令范围内。
 std::vector<CommandWord> splitCommandWords(const std::vector<Token>& tokens,
                                            std::size_t begin, std::size_t end) {
     Parser::SplitResult result = Parser::splitWords(tokens, begin, end);

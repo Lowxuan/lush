@@ -9,6 +9,7 @@
 
 namespace lush::command {
 
+// 当前需要用户补充的必选参数；不包含 optional/default/sourceId。
 struct NeedInput {
     std::string prompt;
     ParamType type = ParamType::Any;
@@ -30,9 +31,10 @@ struct SessionResult {
     bool active = false;
 };
 
-// Collects only the required parameters of an interactive command. Optional
-// parameters are filled by the normal command binder when the session is
-// ready. Session does not parse or evaluate anything; the driver does that.
+// 交互命令的必选参数状态机。
+//
+// 只收集 required 参数；optional 参数在会话完成后由普通 bind 逻辑补默认
+// 值。Session 不解析、不求值、不写输出，输入行处理由 Driver 负责。
 class Session {
 public:
     explicit Session(Signature signature);

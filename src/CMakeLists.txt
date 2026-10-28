@@ -1,5 +1,6 @@
 add_library(lush_core STATIC
     lush/core/version.cpp
+    lush/core/text.cpp
     lush/core/utf8.cpp
     lush/core/source.cpp
     lush/core/diagnostic.cpp

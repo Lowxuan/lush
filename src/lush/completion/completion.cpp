@@ -3,6 +3,13 @@
 #include "lush/core/format.h"
 #include "lush/core/lexer.h"
 #include "lush/core/parser.h"
+#include "lush/core/text.h"
+
+// 补全核心实现。
+//
+// 先对 cursor 前缀做轻量 token 分析，推断上下文/期望类型，再生成候选。
+// 所有操作都是只读的：不执行 AST、不调用宿主、不写 Output、不产生诊断。
+// 字符串/注释/词法错误位置返回空结果。
 
 #include <algorithm>
 #include <cstddef>
@@ -21,45 +28,21 @@ using core::Token;
 using core::TokenKind;
 using core::Value;
 using core::ValueType;
+using core::asciiEqualsIgnoreCase;
+using core::asciiLower;
 
+// 补全期的静态类型：type 为空表示未知；dim 只对 point 有意义。
 struct TypeInfo {
     std::optional<ValueType> type;
     int dim = 0;
 };
 
+// 内建/命令的统一补全描述；signature 已包含 arity 和返回类型。
 struct CallableDescriptor {
     command::Signature signature;
     std::string help;
     bool typeConstructor = false;
 };
-
-char asciiLower(char character) {
-    if (character >= 'A' && character <= 'Z') {
-        return static_cast<char>(character - 'A' + 'a');
-    }
-    return character;
-}
-
-std::string asciiLower(std::string_view text) {
-    std::string result;
-    result.reserve(text.size());
-    for (char character : text) {
-        result.push_back(asciiLower(character));
-    }
-    return result;
-}
-
-bool equalsIgnoreCase(std::string_view left, std::string_view right) {
-    if (left.size() != right.size()) {
-        return false;
-    }
-    for (std::size_t index = 0; index < left.size(); ++index) {
-        if (asciiLower(left[index]) != asciiLower(right[index])) {
-            return false;
-        }
-    }
-    return true;
-}
 
 bool startsWithExact(std::string_view text, std::string_view prefix) {
     return text.size() >= prefix.size() &&
@@ -318,11 +301,11 @@ CallableDescriptor descriptorFromSignature(const command::Signature& signature) 
 std::optional<CallableDescriptor> findDescriptor(
     std::string_view name, const command::Registry& registry) {
     for (const CallableDescriptor& descriptor : builtinDescriptors()) {
-        if (equalsIgnoreCase(descriptor.signature.name, name)) {
+        if (asciiEqualsIgnoreCase(descriptor.signature.name, name)) {
             return descriptor;
         }
         for (const std::string& alias : descriptor.signature.aliases) {
-            if (equalsIgnoreCase(alias, name)) {
+            if (asciiEqualsIgnoreCase(alias, name)) {
                 return descriptor;
             }
         }
@@ -556,6 +539,7 @@ bool hasWhitespaceBetween(std::string_view text, std::size_t begin,
     return false;
 }
 
+// 当前语句起点与未闭合分隔符栈，用于判断光标所在语法上下文。
 struct Structure {
     std::size_t statementStart = 0;
     std::vector<std::pair<TokenKind, std::size_t>> delimiters;
@@ -584,6 +568,7 @@ Structure structureOf(const std::vector<Token>& tokens) {
     return structure;
 }
 
+// 光标前正在输入的词：prefix 用于过滤，replace 用于替换整个 token。
 struct PrefixInfo {
     std::optional<std::size_t> tokenIndex;
     std::string prefix;
@@ -710,7 +695,7 @@ void addCallableItems(std::vector<CompletionItem>& items,
         std::vector<std::string> names;
         names.push_back(descriptor.signature.name);
         for (const std::string& alias : descriptor.signature.aliases) {
-            if (!equalsIgnoreCase(alias, descriptor.signature.name)) {
+            if (!asciiEqualsIgnoreCase(alias, descriptor.signature.name)) {
                 names.push_back(alias);
             }
         }
@@ -719,7 +704,7 @@ void addCallableItems(std::vector<CompletionItem>& items,
                 continue;
             }
             std::string itemDetail = detail;
-            if (!equalsIgnoreCase(name, descriptor.signature.name)) {
+            if (!asciiEqualsIgnoreCase(name, descriptor.signature.name)) {
                 itemDetail = "别名 " + descriptor.signature.name + "；" +
                              itemDetail;
             }
@@ -919,6 +904,9 @@ bool isCallableToken(const Token& token, const core::Env& env,
 
 } // namespace
 
+// 对外入口：分析前缀并生成候选。
+// 参数 request 提供原始 Source、cursor 字节偏移、Env、Registry 和可选
+// session 输入；返回值只包含纯文本/元数据，不包含诊断。
 CompletionResult complete(const CompletionRequest& request) {
     CompletionResult emptyResult;
     if (request.cursor > request.source.text().size()) {

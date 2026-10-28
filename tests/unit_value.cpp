@@ -19,6 +19,7 @@ using lush::core::ValueType;
 using lush::core::formatDouble;
 using lush::core::formatValue;
 using lush::core::formatValueNested;
+using lush::core::runtimeTypeName;
 using lush::core::valueTypeName;
 
 LUSH_TEST(value_basic_types) {
@@ -87,6 +88,7 @@ LUSH_TEST(value_callable_identity) {
     LUSH_CHECK(value.isCallable());
     LUSH_CHECK(value.type() == ValueType::Callable);
     LUSH_CHECK_EQ(formatValue(value), "int");
+    LUSH_CHECK_EQ(runtimeTypeName(value), "callable");
     LUSH_CHECK(value == Value::makeCallable(intCallable));
     LUSH_CHECK(value != Value::makeCallable(catalog.findCallable("len")));
 }
@@ -100,6 +102,7 @@ LUSH_TEST(value_type_token) {
                   std::string("callable"));
     LUSH_CHECK_EQ(formatValue(token), "callable");
     LUSH_CHECK_EQ(formatValueNested(token), "callable");
+    LUSH_CHECK_EQ(runtimeTypeName(token), "callable");
     LUSH_CHECK(token == Value::makeTypeToken());
 }
 

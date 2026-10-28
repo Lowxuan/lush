@@ -1,25 +1,18 @@
 #include "lush/core/ast.h"
 
+#include "lush/core/text.h"
+
 #include <charconv>
 #include <sstream>
 #include <string>
 #include <system_error>
 
+// AST dump 与类型名映射。
+//
+// DumpVisitor 只用于 --dump-ast/测试，不参与执行；TypeKind 的名称/保留名
+// 辅助函数供 Parser、validate 和 completion 共用。
 namespace lush::core {
 namespace {
-
-std::string asciiLower(std::string_view text) {
-    std::string result;
-    result.reserve(text.size());
-    for (char character : text) {
-        if (character >= 'A' && character <= 'Z') {
-            result.push_back(static_cast<char>(character - 'A' + 'a'));
-        } else {
-            result.push_back(character);
-        }
-    }
-    return result;
-}
 
 std::string escapeString(std::string_view text) {
     std::string escaped;
@@ -72,6 +65,7 @@ std::string formatDouble(double value) {
     return std::string(buffer, result.ptr);
 }
 
+// 把 AST 渲染为稳定的缩进文本；仅用于 --dump-ast 和调试。
 class DumpVisitor final : public AstVisitor {
 public:
     DumpVisitor(const Source& source, std::ostringstream& out)
@@ -329,6 +323,8 @@ private:
 
 } // namespace
 
+// 把源码类型名映射为 TypeKind；未知名字返回 nullopt。
+// 匹配大小写不敏感，但仅支持内置类型名。
 std::optional<TypeKind> typeKindFromName(std::string_view name) noexcept {
     const std::string lower = asciiLower(name);
     if (lower == "int") return TypeKind::Int;
@@ -345,6 +341,7 @@ std::optional<TypeKind> typeKindFromName(std::string_view name) noexcept {
     return std::nullopt;
 }
 
+// 返回规范的（小写）类型名，用于诊断和 AST dump。
 std::string_view typeKindName(TypeKind kind) noexcept {
     switch (kind) {
     case TypeKind::Int: return "int";
@@ -363,6 +360,7 @@ std::string_view typeKindName(TypeKind kind) noexcept {
     return "unknown";
 }
 
+// 是否为内置类型/保留类型名（含 any/callable/void）。
 bool isReservedTypeName(std::string_view name) noexcept {
     return typeKindFromName(name).has_value();
 }

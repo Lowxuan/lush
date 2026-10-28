@@ -13,6 +13,7 @@ namespace lush::core {
 using SourceId = std::uint32_t;
 inline constexpr SourceId kNoSource = 0;
 
+// 原始源文本中的半开区间 [start, end)，单位是字节。
 struct Span {
     std::size_t start = 0;
     std::size_t end = 0;
@@ -26,6 +27,7 @@ struct Span {
     }
 };
 
+// 1-based 物理行列；列按字节计数，与 spec 诊断位置一致。
 struct LineCol {
     std::size_t line = 1;
     std::size_t column = 1;

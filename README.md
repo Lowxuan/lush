@@ -54,5 +54,5 @@ ctest --test-dir build -C Debug --output-on-failure
 - `src/cli/`：命令行前端（REPL、脚本、`-e`、dump；M9 接 replxx）
 - `third_party/replxx/`：M9 计划中的 vendored CLI 行编辑依赖
 - `examples/`：M10/M11 的宿主和文档示例
-- `tests/`：单元测试（M3–M8a golden/单元测试已落地；`lush_tests` 230 个测试）
+- `tests/`：单元测试（M3–M8a golden/单元测试已落地；`lush_tests` 232 个测试）
 - `docs/language.md`、`docs/embedding.md`：M11 计划交付的两份用户文档

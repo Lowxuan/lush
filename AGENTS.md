@@ -26,7 +26,7 @@ spec 很长（约 2230 行），按需读：§0.1 决策表、§2–§8 语义�
 - M8b–M11 的计划：用户函数运行/补全（M8b–M8c）；CLI Tab + replxx（M9）；编辑器分析与宿主 API（M10）；两份用户文档（M11）。
 - M2 的 AST/Parser 规则、M3 的求值规则、M4 的命令规则、M5 的会话规则、M6 的补全规则和 M8a 的函数语法规则已在 `docs/spec.md` 和 `docs/steps.md` 实现并测试。
 - spec §15 的 G01–G52 中，M3 的非命令 golden 已在 `tests/golden_spec.cpp` 落地；命令 golden 已在 `tests/unit_command.cpp` 落地；会话/驱动测试在 `tests/unit_driver.cpp` 落地；补全/`read` 测试在 `tests/unit_completion.cpp` / `tests/unit_reference.cpp` 落地。
-- 当前 `lush_tests` 有 230 个测试；CTest 有五个目标：`lush_tests`、`lush_version`、`lush_dump_tokens`、`lush_dump_ast`、`lush_eval`。
+- 当前 `lush_tests` 有 232 个测试；CTest 有五个目标：`lush_tests`、`lush_version`、`lush_dump_tokens`、`lush_dump_ast`、`lush_eval`。
 
 M1 词法实现约定（已完成）：
 
@@ -103,7 +103,7 @@ M8a 实现摘要（已完成）：
 - Lexer `Arrow`、`Def`/`Return` AST、参数/返回类型注解、Parser/Incomplete、AST dump。
 - `FunctionSignature`、Env 级 `FunctionTable`、`ValueType::TypeToken`/`callable` token。
 - 两遍校验、S010/S011/S012、名称/类型冲突、脚本/REPL 重定义、现有 Env 变量/函数冲突。
-- `lush_tests` 共 230 个测试；函数体尚未执行。
+- `lush_tests` 共 232 个测试；函数体尚未执行。
 
 M8b–M11 规划摘要（未实现，详见 `docs/steps.md`）：
 
@@ -112,6 +112,13 @@ M8b–M11 规划摘要（未实现，详见 `docs/steps.md`）：
 - M9：vendored replxx，固定 commit `1f149bfe20bf6e49c1afd4154eaf0032c8c2fda2`（BSD），CLI 行编辑/历史/Tab；关闭时回退 `std::getline`；Windows 实测，Linux 至少编译。
 - M10：comment trivia + best-effort token/error span；严格 lexer 不变；宿主编辑器分析 API；UTF-8 ↔ Qt UTF-16 示例；公开宿主 API/`examples/embed.cpp`。
 - M11：`docs/language.md` 与 `docs/embedding.md`，并让示例参与构建/测试。
+
+## 注释与可读性
+
+- 文件头说明模块职责和边界；类注释说明职责、所有权/生命周期和关键不变量。
+- 非平凡函数在开头说明功能、参数、返回/失败；简单访问器不强制逐行注释。
+- 注释解释“为什么/约束”，不复述代码；语义细节引用 `docs/spec.md` 对应小节。
+- 通用 ASCII 文本操作集中在 `src/lush/core/text.*`；运行时诊断类型名用 `runtimeTypeName`。
 
 ## 构建 / 测试
 
@@ -144,7 +151,7 @@ ctest --preset vs2022-debug --output-on-failure
 ## 目录与依赖
 
 ```text
-src/lush/core/        只依赖标准库（utf8/source/diagnostic/token/lexer/version；M8a 起含 FunctionTable/TypeToken）
+src/lush/core/        只依赖标准库（text/utf8/source/diagnostic/token/lexer/version；M8a 起含 FunctionTable/TypeToken）
 src/lush/command/     命令注册、参数绑定、宿主、交互会话（已实现）
 src/lush/driver/      脚本 / REPL 执行状态机、SourceTable（当前；M8b 上移 Env）
 src/lush/completion/  补全核心（已实现；M8c 加 CompletionScope，M9 接 CLI Tab）

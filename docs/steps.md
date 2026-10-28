@@ -21,7 +21,7 @@
 | M10 编辑器/宿主 API | ⬜ 计划 | trivia、best-effort token、公开宿主 API、QSyntaxHighlighter 示例 |
 | M11 用户文档 | ⬜ 计划 | 语言使用简述、宿主集成说明、可编译示例 |
 
-M1–M7 已完成，M8a 已完成。`lush_tests` 当前 230 个测试，CTest 目标为 `lush_tests`、`lush_version`、`lush_dump_tokens`、`lush_dump_ast`、`lush_eval`。M8b–M11 的语义目标见 `docs/spec.md` 0.4.0；实现顺序按本文执行，不得提前声称后续功能已可用。
+M1–M7 已完成，M8a 已完成。`lush_tests` 当前 232 个测试，CTest 目标为 `lush_tests`、`lush_version`、`lush_dump_tokens`、`lush_dump_ast`、`lush_eval`。M8b–M11 的语义目标见 `docs/spec.md` 0.4.0；实现顺序按本文执行，不得提前声称后续功能已可用。
 
 ---
 
@@ -776,7 +776,7 @@ def f() { ... }
 - Lexer/Arrow、Def/Return AST、函数参数/类型注解、Parser/Incomplete、AST dump 已完成。
 - `FunctionSignature`、`FunctionTable`（Env 级签名表）、`ValueType::TypeToken`、`callable` token 已实现。
 - 两遍校验、S010/S011/S012、名称/类型冲突、脚本/REPL 重定义和现有 Env 变量/函数冲突已落地。
-- `lush_tests` 增至 230 个；G42/type 相关测试更新为 `callable` token。
+- `lush_tests` 增至 232 个；G42/type 相关测试更新为 `callable` token。
 
 **文件**
 
@@ -863,7 +863,7 @@ def f() { ... }
 
 - 函数定义不悬空；REPL 多次调用稳定；
 - 错误码、Span、Source 正确；函数体 Source 与调用点 Source 不混用；
-- 现有 230 个测试不回归；
+- 现有 232 个测试不回归；
 - Debug / Release / Werror / Ninja 全绿。
 
 ---
@@ -1093,5 +1093,5 @@ def f() { ... }
 - `Env` 持有 `FunctionTable` 和 `SourceTable`；Source 保留到 `Env` 销毁；函数值必须拥有 AST 和 Source，SourceId 只做诊断/查询。
 - `callable` 是 `ValueType::TypeToken`，不是 invocable callable；`type(任意 invocable callable) == callable`。
 - 补全使用只读 `CompletionScope`，不修改真实 `Env`，不暴露调用点局部。
-- 测试基线：M8a 结束 230 个测试；每个里程碑结束时更新实际数量，不固定提前写死。
+- 测试基线：M8a 结束 232 个测试；每个里程碑结束时更新实际数量，不固定提前写死。
 - 建议验收顺序：M7 → M8a → M8b → M8c → M9 → M10 → M11；需要并行时只能并行文档整理和纯测试设计，不能跨语义门禁合并实现。

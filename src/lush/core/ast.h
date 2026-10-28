@@ -9,13 +9,22 @@
 #include <string_view>
 #include <vector>
 
+// AST 与函数签名模型。
+//
+// 解析器只负责建立这里的结构，不做名称/类型校验；校验和求值分别由
+// validate.cpp / eval.cpp 消费。Span 始终指向原始物理源文本，而不是
+// 去掉续行后的逻辑文本。
 namespace lush::core {
 
+// 标识符及其原文位置。变量名大小写敏感；函数名由 FunctionTable 单独
+// 规范化为大小写不敏感。
 struct Name {
     std::string text;
     Span span{};
 };
 
+// 注解中的静态类型。Unknown 表示解析时看到了一个未知类型名，具体
+// S011 诊断在 validate 阶段产生；省略注解则由上下文决定 any/void。
 enum class TypeKind {
     Int,
     Double,
@@ -31,18 +40,25 @@ enum class TypeKind {
     Unknown,
 };
 
+// 源码中的一个类型注解，text 保留用户原始拼写，kind 是规范化结果。
 struct TypeAnnotation {
     TypeKind kind = TypeKind::Unknown;
     std::string text;
     Span span{};
 };
 
+// 用户函数的单个参数；type 为空表示省略注解，语义为 any。
 struct FunctionParam {
     Name name;
     std::optional<TypeAnnotation> type;
     Span span{};
 };
 
+// 用户函数声明头。
+//
+// returnType 为空表示源码省略了返回注解，按 void 处理；显式返回 void
+// 时也保留 TypeAnnotation{kind=Void}，因此 returnsValue() 对两种情况
+// 都返回 false。函数体不放在签名里，签名表只需要声明模型。
 struct FunctionSignature {
     Name name;
     std::vector<FunctionParam> params;
@@ -84,6 +100,7 @@ enum class IncDecOp {
     Decrement,
 };
 
+// 稳定节点标识，供不依赖 dynamic_cast 的通用遍历和测试使用。
 enum class NodeKind {
     Program,
     Block,
@@ -152,6 +169,10 @@ struct Deref;
 struct Point;
 struct List;
 
+// AST 默认访问者。
+//
+// 所有 visit 都是空实现，子类只覆盖关心的节点；目前用于 AST dump 和
+// BoundaryInt 的位置校验/规范化。访问者不拥有节点。
 class AstVisitor {
 public:
     virtual ~AstVisitor() = default;
@@ -188,6 +209,7 @@ public:
     virtual void visit(const List&) {}
 };
 
+// 所有 AST 节点的基类：带源码范围，支持访问者和运行时 kind 查询。
 struct Node {
     Span span{};
     virtual ~Node() = default;
@@ -195,6 +217,7 @@ struct Node {
     virtual NodeKind kind() const noexcept = 0;
 };
 
+// 语句与表达式只用于类型区分，不增加状态。
 struct Stmt : Node {};
 struct Expr : Node {};
 
@@ -362,6 +385,7 @@ struct Command : Stmt {
     NodeKind kind() const noexcept override { return NodeKind::Command; }
 };
 
+// 顶层用户函数定义。M8a 只保存/校验；M8b 起 body 会被函数调用执行。
 struct Def : Stmt {
     FunctionSignature signature;
     StmtPtr body;
@@ -369,6 +393,7 @@ struct Def : Stmt {
     NodeKind kind() const noexcept override { return NodeKind::Def; }
 };
 
+// 函数返回语句；value 为空表示 bare return。
 struct Return : Stmt {
     ExprPtr value;
     void accept(AstVisitor& visitor) const override { visitor.visit(*this); }
@@ -407,6 +432,7 @@ struct For : Stmt {
     NodeKind kind() const noexcept override { return NodeKind::For; }
 };
 
+// 一次解析/校验/执行的顶层语句序列；函数定义也作为普通 Stmt 保存。
 struct Program : Node {
     std::vector<StmtPtr> statements;
     void accept(AstVisitor& visitor) const override { visitor.visit(*this); }

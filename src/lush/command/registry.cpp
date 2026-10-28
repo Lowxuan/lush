@@ -1,5 +1,13 @@
 #include "lush/command/registry.h"
 
+#include "lush/core/text.h"
+
+// 命令注册、参数绑定和宿主 callable 适配。
+//
+// 注册阶段把 CommandSpec 转成 Signature；调用阶段先检查 arity，再按
+// 参数从左到右转换，最后才调用 handler。注册失败是宿主编程错误，
+// 返回 RegistrationResult，不产生 L/P/S/R 诊断。
+
 #include <cstddef>
 #include <memory>
 #include <optional>
@@ -12,18 +20,7 @@
 namespace lush::command {
 namespace {
 
-std::string asciiLower(std::string_view text) {
-    std::string lower;
-    lower.reserve(text.size());
-    for (char character : text) {
-        if (character >= 'A' && character <= 'Z') {
-            lower.push_back(static_cast<char>(character - 'A' + 'a'));
-        } else {
-            lower.push_back(character);
-        }
-    }
-    return lower;
-}
+using core::asciiLower;
 
 bool isAsciiAlpha(char character) {
     return (character >= 'A' && character <= 'Z') ||
@@ -71,13 +68,6 @@ std::string_view paramTypeName(ParamType type) {
     return "any";
 }
 
-std::string actualTypeName(const core::Value& value) {
-    if (value.isCallable()) {
-        return "callable";
-    }
-    return std::string(core::valueTypeName(value.type()));
-}
-
 bool numericValue(const core::Value& value, double& out) {
     if (value.isInt()) {
         out = static_cast<double>(value.asInt());
@@ -109,6 +99,7 @@ bool pointFromList(const core::ListValue& list, core::PointValue& out) {
     return true;
 }
 
+// 参数转换结果：成功值、失败码和错误文案三选一组合。
 struct ConvertResult {
     std::optional<core::Value> value;
     std::optional<core::ErrorCode> error;
@@ -127,7 +118,7 @@ ConvertResult typeError(const ParamSpec& param, const core::Value& value) {
     return conversionError(
         core::ErrorCode::R002,
         "期望 " + std::string(paramTypeName(param.type)) + "，实际为 " +
-            actualTypeName(value));
+            core::runtimeTypeName(value));
 }
 
 ConvertResult convertParam(const ParamSpec& param, const core::Value& value) {
@@ -191,6 +182,7 @@ ConvertResult convertParam(const ParamSpec& param, const core::Value& value) {
     return typeError(param, value);
 }
 
+// 完整绑定结果：绑定后的参数值，或首个参数/arity 诊断。
 struct BindResult {
     std::vector<core::Value> values;
     std::optional<core::Diagnostic> diagnostic;
@@ -216,6 +208,8 @@ core::Diagnostic makeHostDiagnostic(const HostError& error,
                           std::move(message), source);
 }
 
+// 绑定命令实参：检查 arity、补默认值、转换类型并处理变参。
+// callSite=true 时 arity 错误为 R002；命令语句为 S002/S006。
 BindResult bindArguments(const Signature& signature,
                          const std::vector<core::Value>& args,
                          const std::vector<core::Span>& argSpans,
@@ -314,6 +308,7 @@ BindResult bindCall(const Signature& signature,
                          source, true);
 }
 
+// 把注册的值函数包装成 core::Callable；共享 RegisteredCallable 所有权。
 class HostCallable final : public core::Callable {
 public:
     explicit HostCallable(

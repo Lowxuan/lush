@@ -8,8 +8,10 @@
 
 namespace lush::driver {
 
-// Owns the source texts referenced by SourceId within one Driver instance.
-// Ids are monotonic and are never reused; kNoSource (0) is invalid.
+// Driver 生命周期内持有的源文本表。
+//
+// SourceId 单调递增且不复用；kNoSource (0) 无效。M8b 计划把该表上移到
+// Env，使函数值持有的 Source 活到 Env 销毁。
 class SourceTable {
 public:
     core::SourceId add(std::string text);

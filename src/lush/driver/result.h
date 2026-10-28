@@ -30,6 +30,7 @@ enum class CancelReason {
     EmptyRequired,
 };
 
+// 一次 Driver 调用的结果；status 决定其余字段是否有意义。
 struct DriverResult {
     DriverStatus status = DriverStatus::Done;
     std::optional<core::IncompleteReason> incomplete;

@@ -2,6 +2,10 @@
 
 #include <utility>
 
+// 运行时值的存储与拷贝语义。
+//
+// ListValue 的 shared_ptr 只是实现细节：拷贝构造/赋值必须克隆元素 vector，
+// 以维持语言级值语义；Callable 按身份共享；TypeToken 是轻量值。
 namespace lush::core {
 
 std::string_view valueTypeName(ValueType type) noexcept {
@@ -18,6 +22,15 @@ std::string_view valueTypeName(ValueType type) noexcept {
     return "unknown";
 }
 
+// 用户诊断中的类型名：callable/TypeToken 统一为 callable。
+std::string runtimeTypeName(const Value& value) {
+    if (value.isCallable() || value.isTypeToken()) {
+        return "callable";
+    }
+    return std::string(valueTypeName(value.type()));
+}
+
+// 空列表也分配 vector，保证 items() 永远可返回有效引用。
 ListValue::ListValue() : items_(std::make_shared<std::vector<Value>>()) {}
 
 ListValue::ListValue(std::vector<Value> items)

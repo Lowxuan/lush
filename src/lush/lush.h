@@ -12,6 +12,7 @@
 #include "lush/core/output.h"
 #include "lush/core/parser.h"
 #include "lush/core/source.h"
+#include "lush/core/text.h"
 #include "lush/core/token.h"
 #include "lush/core/utf8.h"
 #include "lush/core/validate.h"

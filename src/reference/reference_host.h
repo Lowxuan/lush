@@ -7,6 +7,10 @@
 
 namespace lush::reference {
 
+// CLI 演示宿主：注册 line/circle/move/read。
+//
+// Registry 归 ReferenceHost 所有；input/output 指针只在宿主生命周期内
+// 有效，默认构造使用 std::cin/std::cout，测试可注入流。
 class ReferenceHost {
 public:
     ReferenceHost();

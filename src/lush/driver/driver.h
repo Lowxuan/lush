@@ -8,6 +8,11 @@
 #include <string>
 #include <string_view>
 
+// 脚本/REPL 执行状态机。
+//
+// Driver 采用 pull 模型：调用方持续 feedLine() 或 runScript()，Driver
+// 返回 Done/NeedMore/NeedInput/Error/Cancelled。它拥有 SourceTable 和
+// 当前交互 Session，但不拥有 Env/Registry/Output。
 namespace lush::core {
 class Env;
 class Output;
@@ -20,7 +25,10 @@ class Driver {
 public:
     Driver(core::Env& env, command::Registry& registry, core::Output& output);
 
+    // 解析并执行完整脚本；失败返回 Error，不进入会话。
     DriverResult runScript(std::string text);
+
+    // 提交一行 REPL 输入；可能返回 NeedMore/NeedInput 继续收集。
     DriverResult feedLine(std::string_view line);
     DriverResult submitPoint(core::PointValue point);
     DriverResult cancel();

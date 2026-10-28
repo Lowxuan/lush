@@ -12,12 +12,14 @@
 
 namespace lush::command {
 
+// 宿主 callable 的可显示错误；默认映射为 R010。
 struct HostError {
     std::string message;
     std::optional<core::Span> span;
     core::SourceId source = core::kNoSource;
 };
 
+// 命令/值函数返回给求值器的统一结果：值、错误或两者皆空（void）。
 struct CommandResult {
     std::optional<core::Value> value;
     std::optional<HostError> error;
@@ -42,9 +44,8 @@ struct CommandResult {
     }
 };
 
-// Void commands may write to the output stream. Value functions do not receive
-// an Output by default, but a host function may still perform explicit I/O
-// (for example ReferenceHost::read) through state captured by the handler.
+// void 命令可以直接写 Output；值函数默认不接收 Output，但宿主函数仍可
+// 通过捕获状态做显式 I/O（例如 ReferenceHost::read）。
 using CommandHandler = std::function<CommandResult(
     const std::vector<core::Value>&, const core::CommandContext&,
     core::Output&)>;

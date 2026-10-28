@@ -1,7 +1,14 @@
 #include "lush/core/builtins.h"
 
 #include "lush/core/format.h"
+#include "lush/core/text.h"
 #include "lush/core/utf8.h"
+
+// 内建 callable 实现。
+//
+// BuiltinId 同时驱动 arity 表和实际调用；语句/表达式位置都可以调用，
+// 返回值在语句位置丢弃。类型构造器与 type/len/echo 的运行时语义集中在
+// 本文件，命令宿主通过 NameCatalog 接口接入。
 
 #include <charconv>
 #include <cmath>
@@ -48,6 +55,7 @@ bool arityOk(const BuiltinArity& arity, std::size_t argc) {
 
 CallablePtr callableForType(ValueType type);
 
+// 内建 callable 的无状态适配器；具体逻辑按 BuiltinId 分派到 callX。
 class BuiltinCallable final : public Callable {
 public:
     explicit BuiltinCallable(BuiltinId id) : id_(id) {}
@@ -73,23 +81,7 @@ private:
     BuiltinId id_;
 };
 
-std::string asciiLower(std::string_view text) {
-    std::string lower;
-    lower.reserve(text.size());
-    for (char character : text) {
-        if (character >= 'A' && character <= 'Z') {
-            lower.push_back(static_cast<char>(character - 'A' + 'a'));
-        } else {
-            lower.push_back(character);
-        }
-    }
-    return lower;
-}
-
-bool asciiEqualsIgnoreCase(std::string_view left, std::string_view right) {
-    return asciiLower(left) == asciiLower(right);
-}
-
+// 大小写不敏感地识别内建名；str 是 string 的别名。
 std::optional<BuiltinId> findBuiltinId(std::string_view name) {
     const std::string lower = asciiLower(name);
     if (lower == "int") {
@@ -119,13 +111,6 @@ std::optional<BuiltinId> findBuiltinId(std::string_view name) {
     return std::nullopt;
 }
 
-std::string actualTypeName(const Value& value) {
-    if (value.isCallable() || value.isTypeToken()) {
-        return "callable";
-    }
-    return std::string(valueTypeName(value.type()));
-}
-
 Span argumentSpan(const CallContext& context, std::size_t index) {
     if (index < context.argSpans.size()) {
         return context.argSpans[index];
@@ -143,7 +128,7 @@ CallResult typeError(const CallContext& context, std::size_t index,
                      const std::string& expected, const Value& actual) {
     return CallResult::error(Diagnostic{
         ErrorCode::R002, argumentSpan(context, index),
-        "期望 " + expected + "，实际为 " + actualTypeName(actual), {},
+        "期望 " + expected + "，实际为 " + runtimeTypeName(actual), {},
         context.source});
 }
 
@@ -535,6 +520,7 @@ CallResult callPoint(const std::vector<Value>& args,
     return CallResult::ok(Value::makePoint(point));
 }
 
+// type(v)：数据值返回对应类型构造器，callable/type token 返回 callable token。
 CallResult callType(const std::vector<Value>& args,
                     const CallContext& context) {
     (void)context;
@@ -602,11 +588,13 @@ CallablePtr callableForType(ValueType type) {
 
 } // namespace
 
+// 名字是否是语句位置可用的命令（有 callable 信息即可）。
 bool NameCatalog::isCommand(std::string_view name) const {
     const std::optional<CallableInfo> info = callableInfo(name);
     return info.has_value() && !info->returnsValue;
 }
 
+// 保留名包括内建/命令；变量和用户函数不能复用这些名字。
 bool NameCatalog::isReserved(std::string_view name) const {
     return callableInfo(name).has_value();
 }

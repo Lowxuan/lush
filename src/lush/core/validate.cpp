@@ -3,6 +3,14 @@
 #include "lush/core/builtins.h"
 #include "lush/core/cell.h"
 #include "lush/core/function_table.h"
+#include "lush/core/text.h"
+
+// 静态校验实现。
+//
+// 两遍结构：
+//   1. collectFunctions 收集所有顶层 def 签名（不报错，保证前向引用）；
+//   2. validateNode 按源码顺序校验，首个错误写入 Diagnostic 后停止。
+// 这样既支持后定义函数，也满足“首个源码错误优先”的行为。
 
 #include <cstddef>
 #include <string>
@@ -12,11 +20,13 @@
 namespace lush::core {
 namespace {
 
+// 单次校验会话；不拥有 AST/Env/NameCatalog，所有结果保存在 error_。
 class Validator {
 public:
     Validator(const NameCatalog& names, ValidationOptions options)
         : names_(names), options_(options) {}
 
+    // 校验整段程序：先收集函数签名，再按源码顺序校验。
     ValidationResult run(const Program& program) {
         collectFunctions(program);
         if (!error_) {
@@ -38,11 +48,13 @@ private:
         error_ = Diagnostic{code, span, std::move(message), {}};
     }
 
+    // 变量/写入目标不能使用的名字：内建/命令、类型名、用户函数名。
     bool reserved(std::string_view name) const {
         return names_.isReserved(name) || isReservedTypeName(name) ||
                functions_.contains(name);
     }
 
+    // 参数名额外禁止与任意用户函数同名，避免参数遮蔽函数值。
     bool reservedParam(std::string_view name) const {
         return names_.isReserved(name) || isReservedTypeName(name) ||
                functions_.contains(name);
@@ -53,9 +65,10 @@ private:
     }
 
     bool sameName(std::string_view left, std::string_view right) const {
-        return detail::functionKey(left) == detail::functionKey(right);
+        return asciiEqualsIgnoreCase(left, right);
     }
 
+    // 检查 Env 中是否已有同名变量（不区分 ASCII 大小写）。
     bool hasVisibleVariable(std::string_view name) const {
         if (options_.env == nullptr) {
             return false;
@@ -68,6 +81,8 @@ private:
         return false;
     }
 
+    // 第一遍：复制 Env 中已有签名，并注册本程序的所有顶层 def。
+    // 这里不报重复/保留名错误，错误留给 validateNode 按源码顺序报告。
     void collectFunctions(const Program& program) {
         if (options_.env != nullptr) {
             for (const FunctionSignature& existing :
@@ -84,6 +99,7 @@ private:
         }
     }
 
+    // 校验类型注解：未知类型 S011；void 只允许返回位置，不允许参数。
     void validateTypeAnnotation(const TypeAnnotation& type, bool parameter) {
         if (type.kind == TypeKind::Unknown) {
             fail(ErrorCode::S011, type.span, "未知类型 " + type.text);
@@ -94,6 +110,8 @@ private:
         }
     }
 
+    // 校验函数签名内部规则：参数保留名/函数名冲突/重复、类型注解。
+    // 函数名与已有变量/函数的冲突由 validateNode(Def) 在源码位置检查。
     void validateSignature(const FunctionSignature& signature) {
         if (error_) {
             return;
@@ -285,6 +303,8 @@ private:
         }
     }
 
+    // 语句分派：循环/break、赋值目标、命令 arity、Def/Return 规则。
+    // 出错后立即返回，后续调用因 error_ 已设置而短路。
     void validateNode(const Node& statement) {
         if (error_) {
             return;
@@ -372,6 +392,7 @@ private:
             }
             return;
         case NodeKind::Def: {
+            // 顶层限定；函数名冲突、签名和 body 都按源码顺序检查。
             const auto& def = static_cast<const Def&>(statement);
             if (nestingDepth_ != 0 || functionDepth_ != 0) {
                 fail(ErrorCode::S011, def.signature.name.span,
@@ -397,9 +418,9 @@ private:
                      "函数名不能使用保留名");
                 return;
             }
-            const std::string functionKey =
-                detail::functionKey(def.signature.name.text);
-            if (!seenFunctions_.insert(functionKey).second &&
+            const std::string normalizedName =
+                asciiLower(def.signature.name.text);
+            if (!seenFunctions_.insert(normalizedName).second &&
                 !options_.allowFunctionRedefinition) {
                 fail(ErrorCode::S011, def.signature.name.span,
                      "同名用户函数重复定义");
@@ -426,6 +447,7 @@ private:
             return;
         }
         case NodeKind::Return: {
+            // S010：函数外；S012：void 带值或值函数 bare return。
             const auto& returnStatement = static_cast<const Return&>(statement);
             if (functionDepth_ == 0) {
                 fail(ErrorCode::S010, returnStatement.span,
@@ -521,6 +543,7 @@ private:
     ValidationOptions options_;
     std::optional<Diagnostic> error_;
     FunctionTable functions_;
+    // 本程序已遇到的函数名（小写），用于按源码顺序检测重复定义。
     std::unordered_set<std::string> seenFunctions_;
     std::optional<TypeAnnotation> currentReturnType_;
     int loopDepth_ = 0;

@@ -6,6 +6,8 @@
 #include <cstdint>
 #include <system_error>
 
+// 值格式化：顶层字段用于 echo/string，嵌套格式给 list/point 元素加引号。
+// 数字使用最短可回读形式；不使用 locale。
 namespace lush::core {
 namespace {
 
