@@ -111,10 +111,30 @@ EvalFlowResult makeFlowError(Diagnostic diagnostic) {
 }
 
 std::string actualTypeName(const Value& value) {
-    if (value.isCallable()) {
+    if (value.isCallable() || value.isTypeToken()) {
         return "callable";
     }
     return std::string(valueTypeName(value.type()));
+}
+
+bool equalsIgnoreCaseName(std::string_view left, std::string_view right) {
+    if (left.size() != right.size()) {
+        return false;
+    }
+    for (std::size_t index = 0; index < left.size(); ++index) {
+        char a = left[index];
+        char b = right[index];
+        if (a >= 'A' && a <= 'Z') {
+            a = static_cast<char>(a - 'A' + 'a');
+        }
+        if (b >= 'A' && b <= 'Z') {
+            b = static_cast<char>(b - 'A' + 'a');
+        }
+        if (a != b) {
+            return false;
+        }
+    }
+    return true;
 }
 
 bool isNumeric(const Value& value) {
@@ -209,6 +229,15 @@ bool compareEqualValues(const Value& left, const Value& right, bool& equal) {
     }
     if (left.isCallable() && right.isCallable()) {
         equal = left.asCallable() == right.asCallable();
+        return true;
+    }
+    if (left.isTypeToken() && right.isTypeToken()) {
+        equal = left.asTypeToken() == right.asTypeToken();
+        return true;
+    }
+    if ((left.isTypeToken() && right.isCallable()) ||
+        (left.isCallable() && right.isTypeToken())) {
+        equal = false;
         return true;
     }
     return false;
@@ -434,6 +463,14 @@ public:
             return evalRefAssign(static_cast<const RefAssign&>(node));
         case NodeKind::Command:
             return evalCommand(static_cast<const Command&>(node));
+        case NodeKind::Def:
+            // M8a installs signatures only; execution is M8b.
+            context_.env.functions().insert(
+                static_cast<const Def&>(node).signature, true);
+            return makeFlow();
+        case NodeKind::Return:
+            return makeFlowError(makeDiagnostic(
+                ErrorCode::S010, node.span, "return 只能出现在函数体内"));
         case NodeKind::EmptyStmt:
             return makeFlow();
         default:
@@ -491,6 +528,10 @@ private:
     }
 
     EvalExprResult evalVariable(const Variable& variable) {
+        if (equalsIgnoreCaseName(variable.name.text, "callable")) {
+            return makeValue(Value::makeTypeToken());
+        }
+
         auto cell = context_.env.find(variable.name.text);
         if (cell) {
             return makeValue(cell->readCopy());
@@ -564,6 +605,7 @@ private:
         case ValueType::String:
         case ValueType::List:
         case ValueType::Callable:
+        case ValueType::TypeToken:
             return makeExprError(
                 ErrorCode::R002, unary.opSpan,
                 "一元 - 不支持 " + actualTypeName(*operand.value));
@@ -976,6 +1018,7 @@ private:
         case ValueType::Double:
         case ValueType::Bool:
         case ValueType::Callable:
+        case ValueType::TypeToken:
             return makeExprError(
                 ErrorCode::R002, index.index->span,
                 actualTypeName(*receiver.value) + " 不可索引");

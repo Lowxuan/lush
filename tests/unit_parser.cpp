@@ -13,16 +13,21 @@
 namespace {
 
 using lush::core::Boundary;
+using lush::core::Def;
+using lush::core::EmptyStmt;
 using lush::core::ErrorCode;
 using lush::core::ExprParseResult;
 using lush::core::IncompleteReason;
 using lush::core::LexResult;
 using lush::core::Lexer;
+using lush::core::NodeKind;
 using lush::core::ParseOptions;
 using lush::core::ParseResult;
 using lush::core::ParseStatus;
+using lush::core::Return;
 using lush::core::Source;
 using lush::core::TokenRange;
+using lush::core::TypeKind;
 using lush::core::WordEnd;
 
 LexResult lexText(const Source& source) {
@@ -260,10 +265,96 @@ LUSH_TEST(parser_else_and_empty_statement) {
     expectErrorAt(Fixture("if (a) {}; else c=2"), ErrorCode::P001, 1, 12);
 }
 
+LUSH_TEST(parser_user_functions) {
+    {
+        Fixture fixture(
+            "def add(a: int, b: point2) -> double { return a }\n");
+        expectOk(fixture);
+        LUSH_CHECK_EQ(fixture.result.program->statements.size(),
+                      static_cast<std::size_t>(1));
+        const auto* def = dynamic_cast<const Def*>(
+            fixture.result.program->statements[0].get());
+        LUSH_CHECK(def != nullptr);
+        if (!def) {
+            return;
+        }
+        LUSH_CHECK_EQ(def->signature.name.text, std::string("add"));
+        LUSH_CHECK_EQ(def->signature.params.size(),
+                      static_cast<std::size_t>(2));
+        LUSH_CHECK(def->signature.params[0].type.has_value());
+        if (def->signature.params[0].type) {
+            LUSH_CHECK(def->signature.params[0].type->kind == TypeKind::Int);
+        }
+        LUSH_CHECK(def->signature.params[1].type.has_value());
+        if (def->signature.params[1].type) {
+            LUSH_CHECK(def->signature.params[1].type->kind == TypeKind::Point2);
+        }
+        LUSH_CHECK(def->signature.returnType.has_value());
+        if (def->signature.returnType) {
+            LUSH_CHECK(def->signature.returnType->kind == TypeKind::Double);
+        }
+        LUSH_CHECK(def->body->kind() == NodeKind::Block);
+    }
+    {
+        Fixture fixture("def f()\nreturn 1\n");
+        expectOk(fixture);
+        const auto* def = dynamic_cast<const Def*>(
+            fixture.result.program->statements[0].get());
+        LUSH_CHECK(def != nullptr);
+        if (def) {
+            LUSH_CHECK(def->body->kind() == NodeKind::Return);
+            const auto* ret = static_cast<const Return*>(def->body.get());
+            LUSH_CHECK(ret->value != nullptr);
+        }
+    }
+    {
+        Fixture fixture("def f()\n# comment\nreturn 1\n");
+        expectOk(fixture);
+        const auto* def = dynamic_cast<const Def*>(
+            fixture.result.program->statements[0].get());
+        LUSH_CHECK(def != nullptr);
+        if (def) {
+            LUSH_CHECK(def->body->kind() == NodeKind::Return);
+        }
+    }
+    {
+        Fixture fixture("def f()\n;\n");
+        expectOk(fixture);
+        const auto* def = dynamic_cast<const Def*>(
+            fixture.result.program->statements[0].get());
+        LUSH_CHECK(def != nullptr);
+        if (def) {
+            LUSH_CHECK(def->body->kind() == NodeKind::EmptyStmt);
+        }
+    }
+    {
+        Fixture fixture("def f()\n\nreturn 1\n");
+        expectError(fixture, ErrorCode::P002);
+    }
+    {
+        Fixture fixture("def f()\n", ParseOptions::Repl);
+        expectIncomplete(fixture, IncompleteReason::NeedStatement);
+    }
+    {
+        Fixture fixture("def f()\n");
+        expectError(fixture, ErrorCode::P002);
+    }
+    {
+        Fixture fixture("return\n");
+        expectOk(fixture);
+        const auto* ret = dynamic_cast<const Return*>(
+            fixture.result.program->statements[0].get());
+        LUSH_CHECK(ret != nullptr);
+        if (ret) {
+            LUSH_CHECK(ret->value == nullptr);
+        }
+    }
+}
+
 LUSH_TEST(parser_for_boundaries) {
     expectErrorAt(Fixture("for (p.x=0; ; ) ;"), ErrorCode::P001, 1, 7);
     expectErrorAt(Fixture("for (ref=0; ; ) ;"), ErrorCode::S004, 1, 6);
-    expectErrorAt(Fixture("for (def=0; ; ) ;"), ErrorCode::S007, 1, 6);
+    expectErrorAt(Fixture("for (def=0; ; ) ;"), ErrorCode::P001, 1, 6);
     expectErrorAt(Fixture("for (i=ref j; ; ) ;"), ErrorCode::S004, 1, 8);
     expectErrorAt(Fixture("for (i; ; ) ;"), ErrorCode::P001, 1, 7);
     expectErrorAt(Fixture("for (;; i=i+1) ;"), ErrorCode::P001, 1, 10);

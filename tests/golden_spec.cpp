@@ -312,9 +312,10 @@ LUSH_TEST(G42) {
 echo type(int)
 echo type(type)
 echo type(type(1))
+echo (type(int) == callable)
 echo (type(1) == type)
 )");
-    expectOutput(result, "type\ntype\ntype\ntype\nfalse\n");
+    expectOutput(result, "callable\ncallable\ncallable\ncallable\ntrue\nfalse\n");
 }
 
 LUSH_TEST(G43) {

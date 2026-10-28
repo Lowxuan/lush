@@ -13,6 +13,7 @@ std::string_view valueTypeName(ValueType type) noexcept {
     case ValueType::List: return "list";
     case ValueType::Point: return "point";
     case ValueType::Callable: return "type";
+    case ValueType::TypeToken: return "callable";
     }
     return "unknown";
 }
@@ -84,6 +85,8 @@ Value::Value(PointValue value) noexcept : data_(value) {}
 
 Value::Value(CallablePtr value) noexcept : data_(std::move(value)) {}
 
+Value::Value(TypeToken value) noexcept : data_(value) {}
+
 Value Value::makeInt(std::int64_t value) noexcept {
     return Value(value);
 }
@@ -112,6 +115,10 @@ Value Value::makeCallable(CallablePtr value) noexcept {
     return Value(std::move(value));
 }
 
+Value Value::makeTypeToken(TypeToken value) noexcept {
+    return Value(value);
+}
+
 ValueType Value::type() const noexcept {
     switch (data_.index()) {
     case 0: return ValueType::Int;
@@ -121,6 +128,7 @@ ValueType Value::type() const noexcept {
     case 4: return ValueType::List;
     case 5: return ValueType::Point;
     case 6: return ValueType::Callable;
+    case 7: return ValueType::TypeToken;
     default: return ValueType::Int;
     }
 }
@@ -151,6 +159,10 @@ bool Value::isPoint() const noexcept {
 
 bool Value::isCallable() const noexcept {
     return std::holds_alternative<CallablePtr>(data_);
+}
+
+bool Value::isTypeToken() const noexcept {
+    return std::holds_alternative<TypeToken>(data_);
 }
 
 std::int64_t Value::asInt() const noexcept {
@@ -191,6 +203,10 @@ PointValue& Value::asPoint() noexcept {
 
 CallablePtr Value::asCallable() const noexcept {
     return std::get<CallablePtr>(data_);
+}
+
+const TypeToken& Value::asTypeToken() const noexcept {
+    return std::get<TypeToken>(data_);
 }
 
 bool Value::equals(const Value& other) const {
@@ -240,6 +256,9 @@ bool Value::equals(const Value& other) const {
     }
     if (isCallable() && other.isCallable()) {
         return asCallable() == other.asCallable();
+    }
+    if (isTypeToken() && other.isTypeToken()) {
+        return asTypeToken() == other.asTypeToken();
     }
     return false;
 }

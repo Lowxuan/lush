@@ -238,10 +238,12 @@ void Lexer::fail(ErrorCode code, std::size_t start, std::size_t end,
 }
 
 void Lexer::scanComment() {
+    const std::size_t start = pos_;
     ++pos_;
     while (!atEnd()) {
         const char value = charAt(pos_);
         if (value == '\r' || value == '\n') {
+            comments_.push_back(spanOf(start, pos_));
             return;
         }
 
@@ -257,6 +259,7 @@ void Lexer::scanComment() {
         }
         pos_ += decoded->length;
     }
+    comments_.push_back(spanOf(start, pos_));
 }
 
 void Lexer::scanNewline() {
@@ -552,6 +555,9 @@ bool Lexer::scanOperator() {
     if (doubleMatch('=', '=')) {
         match = Match::Double;
         kind = TokenKind::Equal;
+    } else if (doubleMatch('-', '>')) {
+        match = Match::Double;
+        kind = TokenKind::Arrow;
     } else if (doubleMatch('!', '=')) {
         match = Match::Double;
         kind = TokenKind::NotEqual;
@@ -742,7 +748,8 @@ LexResult Lexer::tokenize() {
     const bool endsWithContinuation =
         lastContinuationOffset_ != LexResult::npos && !seenNonNlAfterLastContinuation_;
 
-    return LexResult{std::move(tokens_), std::move(diagnostic_), endsWithContinuation,
+    return LexResult{std::move(tokens_), std::move(comments_),
+                     std::move(diagnostic_), endsWithContinuation,
                      lastContinuationOffset_, source_.size()};
 }
 

@@ -8,12 +8,20 @@
 namespace lush::core {
 
 class NameCatalog;
+class Env;
 
 struct ValidationOptions {
     // True only when the caller has established that the whole input is a
     // single top-level command in REPL mode and may enter an interactive
     // session.  Script validation and nested calls leave this false.
     bool allowInteractiveSession = false;
+
+    // REPL allows a user function to replace an existing definition.  Script
+    // mode keeps duplicate definitions as S011.
+    bool allowFunctionRedefinition = false;
+
+    // Optional environment used to detect existing variables/functions.
+    const Env* env = nullptr;
 };
 
 struct ValidationResult {

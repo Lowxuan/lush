@@ -297,6 +297,16 @@ LUSH_TEST(lexer_recognizes_keywords_case_insensitively) {
                         {TokenKind::Identifier, TokenKind::EndOfFile}));
 }
 
+LUSH_TEST(lexer_recognizes_arrow) {
+    Lexed lexed = lex("-> - >");
+    LUSH_CHECK(kindsAre(lexed.result.tokens,
+                        {TokenKind::Arrow, TokenKind::Minus,
+                         TokenKind::Greater, TokenKind::EndOfFile}));
+    LUSH_CHECK_EQ(lexed.result.tokens[0].text, std::string("->"));
+    LUSH_CHECK_EQ(lexed.result.tokens[1].text, std::string("-"));
+    LUSH_CHECK_EQ(lexed.result.tokens[2].text, std::string(">"));
+}
+
 LUSH_TEST(lexer_reads_numeric_literals) {
     Lexed lexed = lex(
         "0 42 1.5 1e3 1.0e-3 1e+4 1E-2 0e-400 1e-323 9223372036854775807 "

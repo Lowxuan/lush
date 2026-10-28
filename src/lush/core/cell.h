@@ -1,5 +1,6 @@
 #pragma once
 
+#include "lush/core/function_table.h"
 #include "lush/core/value.h"
 
 #include <memory>
@@ -158,6 +159,14 @@ public:
         scopes_.back()[std::string(name)] = std::move(cell);
     }
 
+    FunctionTable& functions() noexcept {
+        return functions_;
+    }
+
+    const FunctionTable& functions() const noexcept {
+        return functions_;
+    }
+
     std::vector<std::string> visibleNames() const {
         std::vector<std::string> names;
         for (auto it = scopes_.rbegin(); it != scopes_.rend(); ++it) {
@@ -185,6 +194,7 @@ private:
     }
 
     std::vector<std::unordered_map<std::string, std::shared_ptr<Cell>>> scopes_;
+    FunctionTable functions_;
 };
 
 } // namespace lush::core

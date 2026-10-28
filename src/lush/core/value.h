@@ -22,6 +22,17 @@ enum class ValueType {
     List,
     Point,
     Callable,
+    TypeToken,
+};
+
+enum class TypeTokenKind {
+    Callable,
+};
+
+struct TypeToken {
+    TypeTokenKind kind = TypeTokenKind::Callable;
+
+    bool operator==(const TypeToken&) const = default;
 };
 
 std::string_view valueTypeName(ValueType type) noexcept;
@@ -74,6 +85,7 @@ public:
     explicit Value(ListValue value);
     explicit Value(PointValue value) noexcept;
     explicit Value(CallablePtr value) noexcept;
+    explicit Value(TypeToken value) noexcept;
 
     static Value makeInt(std::int64_t value) noexcept;
     static Value makeDouble(double value) noexcept;
@@ -82,6 +94,7 @@ public:
     static Value makeList(ListValue value);
     static Value makePoint(PointValue value) noexcept;
     static Value makeCallable(CallablePtr value) noexcept;
+    static Value makeTypeToken(TypeToken value = {}) noexcept;
 
     ValueType type() const noexcept;
 
@@ -92,6 +105,7 @@ public:
     bool isList() const noexcept;
     bool isPoint() const noexcept;
     bool isCallable() const noexcept;
+    bool isTypeToken() const noexcept;
 
     std::int64_t asInt() const noexcept;
     double asDouble() const noexcept;
@@ -103,6 +117,7 @@ public:
     const PointValue& asPoint() const noexcept;
     PointValue& asPoint() noexcept;
     CallablePtr asCallable() const noexcept;
+    const TypeToken& asTypeToken() const noexcept;
 
     // Convenience equality for tests. Incompatible types compare false; the
     // evaluator uses its own comparison path to report R002.
@@ -111,7 +126,8 @@ public:
     bool operator!=(const Value& other) const;
 
 private:
-    std::variant<std::int64_t, double, bool, std::string, ListValue, PointValue, CallablePtr>
+    std::variant<std::int64_t, double, bool, std::string, ListValue, PointValue,
+                 CallablePtr, TypeToken>
         data_;
 };
 

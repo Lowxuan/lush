@@ -9,8 +9,12 @@
 
 namespace {
 
+using lush::core::BuiltinCatalog;
 using lush::core::Env;
 using lush::core::ErrorCode;
+using lush::core::FunctionSignature;
+using lush::core::Name;
+using lush::core::ValidationOptions;
 using lush::core::Value;
 using lush::test::expectError;
 using lush::test::expectErrorCode;
@@ -20,6 +24,7 @@ using lush::test::findCell;
 using lush::test::hasVariable;
 using lush::test::intValue;
 using lush::test::runScript;
+using lush::test::runScriptWithCatalog;
 
 LUSH_TEST(eval_target_first_basic) {
     Env env;
@@ -291,9 +296,9 @@ LUSH_TEST(eval_builtins) {
         "bool\n"
         "list\n"
         "point\n"
-        "type\n"
-        "type\n"
-        "type\n"
+        "callable\n"
+        "callable\n"
+        "callable\n"
         "true\n"
         "false\n"
         "2\n"
@@ -551,6 +556,11 @@ LUSH_TEST(eval_validation_errors) {
     }
     {
         Env env;
+        const auto result = runScript(env, "callable = 1\n");
+        expectError(result, ErrorCode::S003, 1, 1);
+    }
+    {
+        Env env;
         const auto result = runScript(env, "x = int++\n");
         expectError(result, ErrorCode::S003, 1, 5);
     }
@@ -628,11 +638,243 @@ LUSH_TEST(eval_validation_errors) {
     }
 }
 
+LUSH_TEST(eval_user_function_validation) {
+    {
+        Env env;
+        const auto result = runScript(
+            env,
+            "def add(a: int, b: point2) -> double { return a }\n"
+            "def empty() {}\n"
+            "def value() -> int { return 1 }\n");
+        expectNoError(result);
+        LUSH_CHECK(env.functions().contains("ADD"));
+        LUSH_CHECK(env.functions().contains("empty"));
+        LUSH_CHECK(env.functions().contains("value"));
+    }
+    {
+        Env env;
+        const auto result =
+            runScript(env, "def a() { b 1 }\ndef b(x) {}\n");
+        expectNoError(result);
+    }
+    {
+        Env env;
+        const auto result = runScript(env, "def f(a: int, A: int) {}\n");
+        expectNoError(result);
+    }
+    {
+        Env env;
+        const auto result = runScript(env, "def f() -> void { return }\n");
+        expectNoError(result);
+    }
+    {
+        Env env;
+        const auto result = runScript(env, "def f() { return 1 }\n");
+        expectErrorCode(result, ErrorCode::S012);
+    }
+    {
+        Env env;
+        const auto result = runScript(env, "def f() -> int { return }\n");
+        expectErrorCode(result, ErrorCode::S012);
+    }
+    {
+        Env env;
+        const auto result = runScript(env, "def f(a) {}\nf 1 2\n");
+        expectErrorCode(result, ErrorCode::S002);
+    }
+    {
+        Env env;
+        const auto result =
+            runScript(env, "def f(a) -> int { return a }\nx = f()\n");
+        expectErrorCode(result, ErrorCode::R002);
+    }
+    {
+        Env env;
+        const auto result = runScript(env, "def f() {}\nx = f()\n");
+        expectErrorCode(result, ErrorCode::S012);
+    }
+    {
+        Env env;
+        const auto result = runScript(env, "def f() {}\nx = f\n");
+        expectErrorCode(result, ErrorCode::S012);
+    }
+    {
+        Env env;
+        const auto result = runScript(env, "return 1\n");
+        expectError(result, ErrorCode::S010, 1, 1);
+    }
+    {
+        Env env;
+        const auto result = runScript(env, "if (true) return 1\n");
+        expectErrorCode(result, ErrorCode::S010);
+    }
+    {
+        Env env;
+        const auto result = runScript(env, "def f() { def g() {} }\n");
+        expectErrorCode(result, ErrorCode::S011);
+    }
+    {
+        Env env;
+        const auto result = runScript(env, "def Foo() { foo = 1 }\n");
+        expectErrorCode(result, ErrorCode::S003);
+    }
+    {
+        Env env;
+        const auto result = runScript(env, "def Foo() {}\nfoo = 1\n");
+        expectErrorCode(result, ErrorCode::S003);
+    }
+    {
+        Env env;
+        const auto result = runScript(env, "def f(a: unknown) {}\n");
+        expectErrorCode(result, ErrorCode::S011);
+    }
+    {
+        Env env;
+        const auto result = runScript(env, "def f(a: void) {}\n");
+        expectErrorCode(result, ErrorCode::S011);
+    }
+    {
+        Env env;
+        const auto result = runScript(env, "def f(a: int, a: int) {}\n");
+        expectErrorCode(result, ErrorCode::S011);
+    }
+    {
+        Env env;
+        const auto result = runScript(env, "def f(f: int) {}\n");
+        expectErrorCode(result, ErrorCode::S011);
+    }
+    {
+        Env env;
+        const auto result = runScript(env, "def int() {}\n");
+        expectErrorCode(result, ErrorCode::S011);
+    }
+    {
+        Env env;
+        const auto result = runScript(env, "def point2() {}\n");
+        expectErrorCode(result, ErrorCode::S011);
+    }
+    {
+        Env env;
+        const auto result = runScript(env, "def f(callable) {}\n");
+        expectErrorCode(result, ErrorCode::S011);
+    }
+    {
+        Env env;
+        const auto result = runScript(env, "def f() {}\ndef f() {}\n");
+        expectErrorCode(result, ErrorCode::S011);
+    }
+    {
+        Env env;
+        const auto result = runScript(env, "def Foo() {}\ndef foo() {}\n");
+        expectErrorCode(result, ErrorCode::S011);
+    }
+    {
+        Env env;
+        const auto result =
+            runScript(env, "def f() { return 1 }\ndef f() {}\n");
+        expectErrorCode(result, ErrorCode::S012);
+    }
+    {
+        Env env;
+        const auto result = runScript(env, "{\ndef f() {}\n}\n");
+        expectErrorCode(result, ErrorCode::S011);
+    }
+    {
+        Env env;
+        const auto result = runScript(env, "def f(point2) {}\n");
+        expectErrorCode(result, ErrorCode::S011);
+    }
+    {
+        Env env;
+        BuiltinCatalog catalog;
+        const auto result = runScriptWithCatalog(
+            env, "def f() {}\ndef f() {}\n", catalog,
+            ValidationOptions{false, true});
+        expectNoError(result);
+    }
+    {
+        Env env;
+        env.create("foo", Value::makeInt(1));
+        const auto result = runScript(env, "def Foo() {}\n");
+        expectErrorCode(result, ErrorCode::S003);
+    }
+    {
+        Env env;
+        FunctionSignature existing;
+        existing.name = Name{"Foo", {}};
+        env.functions().insert(existing);
+        const auto result = runScript(env, "def foo() {}\n");
+        expectErrorCode(result, ErrorCode::S011);
+    }
+    {
+        Env env;
+        BuiltinCatalog catalog;
+        FunctionSignature existing;
+        existing.name = Name{"Foo", {}};
+        env.functions().insert(existing);
+        const auto result = runScriptWithCatalog(
+            env, "def foo() {}\n", catalog,
+            ValidationOptions{false, true});
+        expectNoError(result);
+    }
+    {
+        Env env;
+        const auto result = runScript(env, "def f()\nx = 1\n");
+        expectNoError(result);
+        LUSH_CHECK(!hasVariable(env, "x"));
+    }
+    {
+        Env env;
+        const auto result = runScript(env, "def f()\n;\n");
+        expectNoError(result);
+        LUSH_CHECK(env.functions().contains("f"));
+    }
+    {
+        Env env;
+        const auto result = runScript(env, "def f()\n\nx = 1\n");
+        expectErrorCode(result, ErrorCode::P002);
+    }
+}
+
+LUSH_TEST(eval_type_token) {
+    Env env;
+    const auto result = runScript(
+        env,
+        "echo callable\n"
+        "echo type(callable)\n"
+        "echo type(int)\n"
+        "echo (type(int) == callable)\n"
+        "echo (type(1) == callable)\n"
+        "echo string(callable)\n"
+        "echo [callable]\n");
+    expectOutput(result,
+                 "callable\ncallable\ncallable\ntrue\nfalse\ncallable\n"
+                 "[callable]\n");
+}
+
+LUSH_TEST(eval_type_token_is_not_callable) {
+    {
+        Env env;
+        const auto result = runScript(env, "echo callable(1)\n");
+        expectErrorCode(result, ErrorCode::R012);
+    }
+    {
+        Env env;
+        const auto result = runScript(env, "x = callable\necho x(1)\n");
+        expectErrorCode(result, ErrorCode::R012);
+    }
+    {
+        Env env;
+        const auto result = runScript(env, "echo bool(callable)\n");
+        expectErrorCode(result, ErrorCode::R002);
+    }
+}
+
 LUSH_TEST(eval_case_insensitive_names) {
     {
         Env env;
         const auto result = runScript(
-            env, "ECHO 1\necho INT(1)\necho (type(INT) == type)\n");
+            env, "ECHO 1\necho INT(1)\necho (type(INT) == callable)\n");
         expectOutput(result, "1\n1\ntrue\n");
     }
     {

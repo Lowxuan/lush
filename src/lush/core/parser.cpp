@@ -53,6 +53,8 @@ bool isStatementStarter(TokenKind kind) noexcept {
     case TokenKind::KwFor:
     case TokenKind::KwBreak:
     case TokenKind::KwContinue:
+    case TokenKind::KwDef:
+    case TokenKind::KwReturn:
         return true;
     default:
         return false;
@@ -145,6 +147,10 @@ public:
             for (const ExprPtr& arg : command->args) {
                 expr(arg.get(), false);
             }
+        } else if (const auto* def = dynamic_cast<const Def*>(node)) {
+            stmt(def->body.get());
+        } else if (const auto* ret = dynamic_cast<const Return*>(node)) {
+            expr(ret->value.get(), false);
         }
     }
 
@@ -256,6 +262,10 @@ public:
             for (const ExprPtr& arg : command->args) {
                 expr(arg.get());
             }
+        } else if (const auto* def = dynamic_cast<const Def*>(node)) {
+            stmt(def->body.get());
+        } else if (const auto* ret = dynamic_cast<const Return*>(node)) {
+            expr(ret->value.get());
         }
     }
 
@@ -602,10 +612,6 @@ private:
         }
 
         const Token& token = current();
-        if (token.kind == TokenKind::KwDef || token.kind == TokenKind::KwReturn) {
-            setDiag(ErrorCode::S007, spanOfToken(token), "def/return 尚未实现");
-            return false;
-        }
         if (token.kind == TokenKind::KwRef) {
             setDiag(ErrorCode::S004, spanOfToken(token), "ref 使用位置非法");
             return false;
@@ -636,9 +642,11 @@ private:
         if (check(TokenKind::KwContinue)) {
             return parseBreakLike(false);
         }
-        if (check(TokenKind::KwDef) || check(TokenKind::KwReturn)) {
-            setDiag(ErrorCode::S007, spanOfToken(current()), "def/return 尚未实现");
-            return nullptr;
+        if (check(TokenKind::KwDef)) {
+            return parseDef();
+        }
+        if (check(TokenKind::KwReturn)) {
+            return parseReturn();
         }
         if (check(TokenKind::KwRef)) {
             setDiag(ErrorCode::S004, spanOfToken(current()), "ref 使用位置非法");
@@ -673,6 +681,191 @@ private:
 
         failUnexpected();
         return nullptr;
+    }
+
+    bool hasCommentBetween(std::size_t begin, std::size_t end) const {
+        for (const Span& comment : lex_.comments) {
+            if (comment.start >= begin && comment.start < end) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool parseTypeAnnotation(TypeAnnotation& type) {
+        if (!check(TokenKind::Identifier)) {
+            if (atEnd() || isTerminator(current().kind)) {
+                return failP002AtBoundary();
+            }
+            return failUnexpected();
+        }
+
+        const Token& token = current();
+        type.text = token.text;
+        type.span = spanOfToken(token);
+        type.kind = typeKindFromName(token.text).value_or(TypeKind::Unknown);
+        advance();
+        return true;
+    }
+
+    bool parseFunctionParams(FunctionSignature& signature) {
+        if (!check(TokenKind::LeftParen)) {
+            if (atEnd() || isTerminator(current().kind)) {
+                return failP002AtBoundary();
+            }
+            return failUnexpected();
+        }
+
+        const Span lparenSpan = spanOfToken(current());
+        advance();
+        pushDelimiter(DelimiterKind::Paren, lparenSpan);
+
+        if (check(TokenKind::RightParen)) {
+            advance();
+            popDelimiter();
+            return true;
+        }
+
+        while (true) {
+            if (!check(TokenKind::Identifier)) {
+                if (atEnd() || isTerminator(current().kind)) {
+                    failP002AtBoundary();
+                } else {
+                    failUnexpected();
+                }
+                return false;
+            }
+
+            FunctionParam param;
+            const Token& nameToken = current();
+            param.name = Name{nameToken.text, spanOfToken(nameToken)};
+            param.span = param.name.span;
+            advance();
+
+            if (check(TokenKind::Colon)) {
+                advance();
+                TypeAnnotation type;
+                if (!parseTypeAnnotation(type)) {
+                    return false;
+                }
+                param.span.end = type.span.end;
+                param.type = std::move(type);
+            }
+            signature.params.push_back(std::move(param));
+
+            if (check(TokenKind::Comma)) {
+                advance();
+                if (check(TokenKind::RightParen)) {
+                    setDiag(ErrorCode::P001, spanOfToken(current()),
+                            "函数参数列表不能以逗号结尾");
+                    return false;
+                }
+                continue;
+            }
+
+            if (check(TokenKind::RightParen)) {
+                advance();
+                popDelimiter();
+                return true;
+            }
+
+            if (atEnd() || isTerminator(current().kind)) {
+                return failP002AtBoundary();
+            }
+            return failUnexpected();
+        }
+    }
+
+    StmtPtr parseDef() {
+        const Span defSpan = spanOfToken(current());
+        advance();
+
+        if (!check(TokenKind::Identifier)) {
+            if (atEnd() || isTerminator(current().kind)) {
+                failP002AtBoundary();
+            } else {
+                failUnexpected();
+            }
+            return nullptr;
+        }
+
+        auto statement = std::make_unique<Def>();
+        const Token& nameToken = current();
+        statement->signature.name = Name{nameToken.text, spanOfToken(nameToken)};
+        statement->signature.span = statement->signature.name.span;
+        advance();
+
+        if (!parseFunctionParams(statement->signature)) {
+            return nullptr;
+        }
+
+        if (check(TokenKind::Arrow)) {
+            advance();
+            TypeAnnotation returnType;
+            if (!parseTypeAnnotation(returnType)) {
+                return nullptr;
+            }
+            statement->signature.returnType = std::move(returnType);
+        }
+
+        if (atEnd()) {
+            needStatement_ = true;
+            return nullptr;
+        }
+
+        if (check(TokenKind::Newline)) {
+            std::size_t previousNewlineEnd = 0;
+            bool haveNewline = false;
+            while (check(TokenKind::Newline)) {
+                const Token& newline = current();
+                if (haveNewline &&
+                    !hasCommentBetween(previousNewlineEnd, newline.offset)) {
+                    setDiag(ErrorCode::P002, spanOfToken(newline),
+                            "def 的 body 不能由空行开始", "删除空行或使用 ;");
+                    return nullptr;
+                }
+                previousNewlineEnd = newline.offset + newline.length;
+                haveNewline = true;
+                advance();
+            }
+            if (atEnd()) {
+                needStatement_ = true;
+                return nullptr;
+            }
+        }
+
+        StmtPtr body = parseStatement();
+        if (!body) {
+            return nullptr;
+        }
+        statement->body = std::move(body);
+        statement->span = Span{defSpan.start, statement->body->span.end};
+        statement->signature.span = statement->span;
+        return statement;
+    }
+
+    StmtPtr parseReturn() {
+        const Span returnSpan = spanOfToken(current());
+        advance();
+
+        auto statement = std::make_unique<Return>();
+        statement->span = returnSpan;
+
+        if (!atEnd() && !check(TokenKind::Newline) &&
+            !check(TokenKind::Semicolon) && !check(TokenKind::RightBrace) &&
+            !check(TokenKind::KwElse)) {
+            ExprPtr value = parseExpression(false);
+            if (!value) {
+                return nullptr;
+            }
+            statement->span.end = value->span.end;
+            statement->value = std::move(value);
+        }
+
+        if (!finishStatement()) {
+            return nullptr;
+        }
+        return statement;
     }
 
     StmtPtr parseBlock() {
@@ -858,11 +1051,6 @@ private:
             setDiag(ErrorCode::S004, spanOfToken(current()), "ref 使用位置非法");
             return false;
         }
-        if (check(TokenKind::KwDef) || check(TokenKind::KwReturn)) {
-            setDiag(ErrorCode::S007, spanOfToken(current()), "def/return 尚未实现");
-            return false;
-        }
-
         if (!check(TokenKind::Identifier)) {
             if (atEnd()) {
                 return false;
@@ -974,11 +1162,6 @@ private:
             setDiag(ErrorCode::S004, spanOfToken(current()), "ref 使用位置非法");
             return nullptr;
         }
-        if (check(TokenKind::KwDef) || check(TokenKind::KwReturn)) {
-            setDiag(ErrorCode::S007, spanOfToken(current()), "def/return 尚未实现");
-            return nullptr;
-        }
-
         if (check(TokenKind::Identifier) && pos_ + 1 < limit_ &&
             tokens_[pos_ + 1].kind == TokenKind::KwIn) {
             const Span varSpan = spanOfToken(current());
@@ -1332,12 +1515,6 @@ private:
         const Token& variableToken = current();
         if (variableToken.kind == TokenKind::KwRef) {
             setDiag(ErrorCode::S004, spanOfToken(variableToken), "ref 使用位置非法");
-            return nullptr;
-        }
-        if (variableToken.kind == TokenKind::KwDef ||
-            variableToken.kind == TokenKind::KwReturn) {
-            setDiag(ErrorCode::S007, spanOfToken(variableToken),
-                    "def/return 尚未实现");
             return nullptr;
         }
         if (variableToken.kind != TokenKind::Identifier || variableToken.wsBefore) {
@@ -1790,10 +1967,6 @@ private:
         case TokenKind::KwRef:
             setDiag(ErrorCode::S004, spanOfToken(token), "ref 使用位置非法");
             return nullptr;
-        case TokenKind::KwDef:
-        case TokenKind::KwReturn:
-            setDiag(ErrorCode::S007, spanOfToken(token), "def/return 尚未实现");
-            return nullptr;
         default:
             failExpressionExpected(operandExpected);
             return nullptr;
@@ -2018,10 +2191,6 @@ private:
             const Token& token = current();
             if (token.kind == TokenKind::KwRef) {
                 setDiag(ErrorCode::S004, spanOfToken(token), "ref 使用位置非法");
-                return nullptr;
-            }
-            if (token.kind == TokenKind::KwDef || token.kind == TokenKind::KwReturn) {
-                setDiag(ErrorCode::S007, spanOfToken(token), "def/return 尚未实现");
                 return nullptr;
             }
             if (token.kind != TokenKind::Identifier || token.wsBefore) {

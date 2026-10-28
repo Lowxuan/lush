@@ -1,6 +1,6 @@
 # Lush 命令语言规范
 
-版本 0.4.0 · 状态：M7 已实现，M8–M11 规划（0.3.7 已实现）
+版本 0.4.0 · 状态：M7/M8a 已实现，M8b–M11 规划（0.3.7 已实现）
 
 ---
 
@@ -61,7 +61,7 @@ Lush 是一门嵌入 C++ 宿主的命令语言，目标场景是 AutoCAD 式的�
 | D41 | 用户函数体只读取全局根环境与当前函数参数/块作用域，不捕获调用点局部变量（无闭包）；用户函数递归深度上限 1024，超限报 R015 |
 | D42 | 用户函数值必须拥有函数体 AST 和 Source 句柄；SourceId 只用于诊断和 SourceTable 查询，不能单独保证函数体生命周期 |
 | D43 | CLI Tab 使用 vendored replxx（BSD）实现行编辑、历史和候选展示；核心仍零第三方依赖，replxx 仅作为 CLI 可选依赖 |
-| D44 | `callable` 是 `ValueType::TypeToken`，不是可调用值；所有 invocable callable（内建、宿主函数、用户函数）的 `type(...)` 都返回 `callable` token；`callable(1)` 报 R012 |
+| D44 | `callable` 是 `ValueType::TypeToken`，不是可调用值；所有 invocable callable（内建、宿主函数、用户函数）的 `type(...)` 都返回 `callable` token；表达式位置 `callable(1)` 报 R012 |
 | D45 | `Env` 持有 `FunctionTable` 和 `SourceTable`；SourceId 按 Env 分配；源码保留到 Env 销毁；函数与 Source 同生命周期 |
 | D46 | 函数调用边界只暴露全局根作用域 + 当前函数作用域；已存在的全局变量可写，不存在的名字在函数局部创建；`def` 后空行取消 body，`;` 表示空 body |
 | D47 | `CallContext` / `CommandContext` 可携带非拥有的 `EvalContext*`；`FunctionHandler` 直接接收 `EvalContext&`；缺少 runtime 的函数调用报 R010 |
@@ -100,7 +100,7 @@ Lush 是一门嵌入 C++ 宿主的命令语言，目标场景是 AutoCAD 式的�
 - 0.3.5：M4 语义定稿：变参命令不得有可选参数/默认值；默认值只接受字面量（拒绝 callable）；命令参数先从左到右全部求值再统一绑定（会话按输入逐个绑定）；语句位置 builtin 调用合法；R010 的宿主失败与 Span。
 - 0.3.6：M5 定稿：交互会话只收集必选参数，可选参数默认值在执行时补齐，`hint [default]` 归入补全/Tooltip；R011 仅用于必选空输入；直接提交 Point 的错误无文本 Span，以 DirectPoint 标记；ReferenceHost 兼作 CLI 演示宿主；明确 REPL EOF/Ctrl+C。
 - 0.3.7：M6 补全设计：补全上下文、类型过滤、成员与替换规则；`CommandSpec` / `Signature` 增加可选 `returnType`（仅静态元数据）；参考宿主增加 `read`，明确其宿主 I/O 边界。
-- 0.4.0：M7 数值字符串转换已实现；顶层用户函数、类型注解、void/return、递归限制与 Source/AST 所有权、common callable namespace、replxx CLI Tab、编辑器分析接口与两份用户文档列入 M8–M11 规划。
+- 0.4.0：M7 数值字符串转换、M8a 用户函数语法/TypeToken/静态校验已实现；M8b 运行时、Source/AST 所有权、递归限制、replxx CLI Tab、编辑器分析接口与两份用户文档列入后续规划。
 
 ---
 
@@ -1249,7 +1249,7 @@ type(type) == callable    # true
 type(callable) == callable # true
 ```
 
-`callable` 是 type token，不是构造器：`callable(1)` 报 R012，不会转换任何值。
+`callable` 是 type token，不是构造器：表达式位置 `callable(1)` 报 R012，不会转换任何值。语句位置的 `callable(1)` 仍按命令 + 参数解析。
 
 `bool(v)` 是**显式转换**，不改变 4.8 的规则：`if (0)` 仍然 R002，必须写 `if (bool(0))`。
 
@@ -1602,7 +1602,7 @@ error[P004]: 命令参数不是合法的表达式
 
 ## 15. Golden Tests
 
-G01–G52 对应 0.3.7；G47 已随 M7 改为 R013。0.4.0 的数值字符串用例已在 M7 落地；用户函数、void/return、递归、replxx/CLI 和编辑器分析用例在 `docs/steps.md` 的 M8–M10 中逐里程碑补充；实现完成前不得把计划用例视为已通过。
+G01–G52 对应 0.3.7；G47 已随 M7 改为 R013，G42 已随 M8a 改为 `callable` token。0.4.0 的数值字符串与 M8a 类型/语法用例已落地；用户函数运行、void/return、递归、replxx/CLI 和编辑器分析用例在 `docs/steps.md` 的 M8b–M10 中逐里程碑补充；实现完成前不得把计划用例视为已通过。
 
 约定：
 
@@ -2487,7 +2487,7 @@ primary     = INT | BOUNDARY_INT | FLOAT | STRING | "true" | "false"
 
 ## 17. 待定与后续
 
-以下事项不影响 M8–M11 的主体实现，但需要后续拍板：
+以下事项不影响 M8b–M11 的主体实现，但需要后续拍板：
 
 1. 用户函数是否在 0.5 引入闭包/嵌套 `def`；当前明确不提供。
 2. 是否引入模块/import 与插件注册的生命周期。

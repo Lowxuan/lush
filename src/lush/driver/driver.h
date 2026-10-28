@@ -37,7 +37,8 @@ public:
 private:
     DriverResult parsePendingBuffer();
     DriverResult processParsed(core::Program& program,
-                               core::SourceId sourceId);
+                               core::SourceId sourceId,
+                               bool allowFunctionRedefinition);
     DriverResult processSessionLine(std::string_view line);
     DriverResult finishSession();
     DriverResult makeError(std::optional<core::Diagnostic> diagnostic,

@@ -120,7 +120,7 @@ std::optional<BuiltinId> findBuiltinId(std::string_view name) {
 }
 
 std::string actualTypeName(const Value& value) {
-    if (value.isCallable()) {
+    if (value.isCallable() || value.isTypeToken()) {
         return "callable";
     }
     return std::string(valueTypeName(value.type()));
@@ -456,6 +456,7 @@ CallResult callBool(const std::vector<Value>& args,
         return CallResult::ok(Value::makeBool(!value.asList().empty()));
     case ValueType::Point:
     case ValueType::Callable:
+    case ValueType::TypeToken:
         return typeError(context, 0, "bool/int/double/string/list", value);
     }
     return typeError(context, 0, "bool/int/double/string/list", value);
@@ -537,6 +538,9 @@ CallResult callPoint(const std::vector<Value>& args,
 CallResult callType(const std::vector<Value>& args,
                     const CallContext& context) {
     (void)context;
+    if (args[0].isCallable() || args[0].isTypeToken()) {
+        return CallResult::ok(Value::makeTypeToken());
+    }
     return CallResult::ok(Value::makeCallable(callableForType(args[0].type())));
 }
 
@@ -555,6 +559,7 @@ CallResult callLen(const std::vector<Value>& args, const CallContext& context) {
     case ValueType::Double:
     case ValueType::Bool:
     case ValueType::Callable:
+    case ValueType::TypeToken:
         return typeError(context, 0, "list/string/point", value);
     }
     return typeError(context, 0, "list/string/point", value);
@@ -590,6 +595,7 @@ CallablePtr callableForType(ValueType type) {
     case ValueType::List: return listCallable();
     case ValueType::Point: return pointCallable();
     case ValueType::Callable: return typeCallable();
+    case ValueType::TypeToken: return typeCallable();
     }
     return typeCallable();
 }

@@ -4,8 +4,8 @@
 
 ## 先读什么
 
-- **语义唯一来源：`docs/spec.md`（v0.4.0；M7 已实现，M8–M11 规划）。** 代码与 spec 冲突时以 spec 为准；要改语义，先改 spec 和 golden，再改代码。M8–M11 的语义已写入 0.4.0，但代码尚未实现。
-- `docs/steps.md`：M1–M11 开发里程碑、文件、任务、测试与完成标准；M8–M11 是当前计划。
+- **语义唯一来源：`docs/spec.md`（v0.4.0；M7/M8a 已实现，M8b–M11 规划）。** 代码与 spec 冲突时以 spec 为准；要改语义，先改 spec 和 golden，再改代码。M8b–M11 的语义已写入 0.4.0，但代码尚未实现。
+- `docs/steps.md`：M1–M11 开发里程碑、文件、任务、测试与完成标准；M8b–M11 是当前计划。
 - `README.md`：构建入口。
 - `start.md` / `teaching.md`：历史需求与选型讨论，**不是规范**。`teaching.md` 里推荐的 peglib / ANTLR / Lua 等均未采用；本项目使用手写递归下降 + 优先级爬升，零第三方依赖。
 - **`docs/spec.md` 是 UTF-8。** 直接按 UTF-8 读取；不要按 GBK/cp936 解码。
@@ -14,18 +14,19 @@ spec 很长（约 2230 行），按需读：§0.1 决策表、§2–§8 语义�
 
 ## 当前状态（不要假设功能已存在）
 
-- **M0、M1、M2、M3、M4、M5、M6、M7 已完成；M8–M11 仅完成规划和文档。**
+- **M0、M1、M2、M3、M4、M5、M6、M7、M8a 已完成；M8b–M11 仅完成规划和文档。**
   - `lush_core` 已实现 `utf8`、`source`、`diagnostic`、`token`、`lexer`、`version`、`ast`、`parser`、`value`、`cell`、`validate`、`eval`、`format`、`builtins`、`checked`、`output`；
   - CLI 支持 `--version`、`--help`、`--dump-tokens <file>`、`--dump-tokens -e "<source>"`、`--dump-ast <file>`、`--dump-ast -e "<source>"`、`lush` REPL、`lush <file>`、`lush -e "<source>"`；
-  - M6 补全核心与参考宿主 `read` 已实现；M7 已支持 `int(string)` / `double(string)`；CLI Tab 尚未接入（M9 计划）。
+  - M6 补全核心与参考宿主 `read` 已实现；M7 已支持 `int(string)` / `double(string)`；M8a 已支持用户函数语法/静态校验和 `callable` type token；CLI Tab 尚未接入（M9 计划）。
 - M4 已完成：`lush_command` / `lush_reference` 已实现命令注册、参数绑定、宿主 API 和 `line` / `circle` / `move`；`int 1` 等语句位置 builtin 调用已开放。
 - M5 已完成：`command::Session`、`driver::Driver`、`driver::SourceTable`、REPL/脚本 CLI、SourceId/Source 信息和 ReferenceHost 演示宿主已接入。
 - M6 已完成：`lush_completion`、`CompletionRequest/Result`、`returnType` 元数据、参考宿主 `read` 和 `unit_completion` / `unit_reference` 已实现；CLI Tab 仍未接入。
 - M7 已完成：`int(string)` / `double(string)`、R013、`unit_eval` / `unit_reference` 用例。
-- M8–M11 的计划：用户函数语法/运行时/补全（M8a–M8c）；CLI Tab + replxx（M9）；编辑器分析与宿主 API（M10）；两份用户文档（M11）。
-- M2 的 AST/Parser 规则、M3 的求值规则、M4 的命令规则、M5 的会话规则和 M6 的补全规则已在 `docs/spec.md` 和 `docs/steps.md` 实现并测试。
+- M8a 已完成：`def`/`return`、`->`、类型注解、AST/Parser、两遍静态校验、`FunctionSignature`/`FunctionTable`、`ValueType::TypeToken`/`callable` token；函数体尚未执行。
+- M8b–M11 的计划：用户函数运行/补全（M8b–M8c）；CLI Tab + replxx（M9）；编辑器分析与宿主 API（M10）；两份用户文档（M11）。
+- M2 的 AST/Parser 规则、M3 的求值规则、M4 的命令规则、M5 的会话规则、M6 的补全规则和 M8a 的函数语法规则已在 `docs/spec.md` 和 `docs/steps.md` 实现并测试。
 - spec §15 的 G01–G52 中，M3 的非命令 golden 已在 `tests/golden_spec.cpp` 落地；命令 golden 已在 `tests/unit_command.cpp` 落地；会话/驱动测试在 `tests/unit_driver.cpp` 落地；补全/`read` 测试在 `tests/unit_completion.cpp` / `tests/unit_reference.cpp` 落地。
-- 当前 `lush_tests` 有 223 个测试；CTest 有五个目标：`lush_tests`、`lush_version`、`lush_dump_tokens`、`lush_dump_ast`、`lush_eval`。
+- 当前 `lush_tests` 有 230 个测试；CTest 有五个目标：`lush_tests`、`lush_version`、`lush_dump_tokens`、`lush_dump_ast`、`lush_eval`。
 
 M1 词法实现约定（已完成）：
 
@@ -97,10 +98,16 @@ M7 数值字符串实现（已完成）：
 - `double` 复用 §2.6 的数值语法和有限/下溢检查；格式或范围非法 R013。
 - 新增 `R013`；`unit_eval` 覆盖成功与错误，`unit_reference` 覆盖 `read()` → 数字及非法输入；`lush_tests` 共 223 个测试。
 
-M8–M11 规划摘要（未实现，详见 `docs/steps.md`）：
+M8a 实现摘要（已完成）：
 
-- M8a：`def`/`return`、`->`、`point2`/`point3`、`int`/`double`/`bool`/`string`/`list`/`point`/`any`/`callable` 注解；只允许顶层 `def`，执行前收集并提升；`FunctionSignature`/`ValueType::TypeToken` 静态模型；S010/S011/S012。
-- M8b：`Env` 持有 `FunctionTable` 和 `SourceTable`；Source 保留到 Env 销毁；`UserFunction` 持有 AST + Source；common callable namespace；函数调用边界只看全局根 + 当前函数；语句位置 `f 1 2`、表达式 `f(1,2)`；无闭包；参数不接受 list→point；返回只允许 int→double；值函数漏 return 为 R014；递归上限 1024 / R015。
+- Lexer `Arrow`、`Def`/`Return` AST、参数/返回类型注解、Parser/Incomplete、AST dump。
+- `FunctionSignature`、Env 级 `FunctionTable`、`ValueType::TypeToken`/`callable` token。
+- 两遍校验、S010/S011/S012、名称/类型冲突、脚本/REPL 重定义、现有 Env 变量/函数冲突。
+- `lush_tests` 共 230 个测试；函数体尚未执行。
+
+M8b–M11 规划摘要（未实现，详见 `docs/steps.md`）：
+
+- M8b：`Env` 持有 `SourceTable`；Source 保留到 Env 销毁；`UserFunction` 持有 AST + Source；common callable namespace；函数调用边界只看全局根 + 当前函数；语句位置 `f 1 2`、表达式 `f(1,2)`；无闭包；参数不接受 list→point；返回只允许 int→double；值函数漏 return 为 R014；递归上限 1024 / R015。
 - M8c：用户函数签名进入 completion；只读 `CompletionScope`；返回类型驱动成员补全；def/类型名/`callable` token 补全；void 不作为值。
 - M9：vendored replxx，固定 commit `1f149bfe20bf6e49c1afd4154eaf0032c8c2fda2`（BSD），CLI 行编辑/历史/Tab；关闭时回退 `std::getline`；Windows 实测，Linux 至少编译。
 - M10：comment trivia + best-effort token/error span；严格 lexer 不变；宿主编辑器分析 API；UTF-8 ↔ Qt UTF-16 示例；公开宿主 API/`examples/embed.cpp`。
@@ -137,7 +144,7 @@ ctest --preset vs2022-debug --output-on-failure
 ## 目录与依赖
 
 ```text
-src/lush/core/        只依赖标准库（utf8/source/diagnostic/token/lexer/version）
+src/lush/core/        只依赖标准库（utf8/source/diagnostic/token/lexer/version；M8a 起含 FunctionTable/TypeToken）
 src/lush/command/     命令注册、参数绑定、宿主、交互会话（已实现）
 src/lush/driver/      脚本 / REPL 执行状态机、SourceTable（当前；M8b 上移 Env）
 src/lush/completion/  补全核心（已实现；M8c 加 CompletionScope，M9 接 CLI Tab）
@@ -178,7 +185,7 @@ tests/                单一 lush_tests 可执行文件
 - **def/return 行规则**：`def f()\nx=1` 的 `x=1` 是 body；空行取消 body（REPL Cancelled，脚本 P002）；注释不取消；`def f()\n;` 是空 body；`return` 行尾是 bare return，表达式换行需 `\`。
 - **调用位置仍决定语法**：语句位置 `f 1 2` 是并置调用；表达式位置 `f(1,2)` 是后缀调用；语句位置 `f(1,2)` 仍是命令 + 一个 Point 参数。
 - **函数值生命周期**：`Env` 持有 `FunctionTable` + `SourceTable`；Source 保留到 Env 销毁；函数值必须拥有 AST + Source，SourceId 只做诊断/查询。
-- **callable 类型**：`callable` 是 `ValueType::TypeToken`，不是 invocable；`int`/`len`/`read`/用户函数都是 callable；`callable(1)` 是 R012。
+- **callable 类型**：`callable` 是 `ValueType::TypeToken`，不是 invocable；`int`/`len`/`read`/用户函数都是 callable；表达式位置 `callable(1)` 是 R012。
 - **函数名/参数名**：函数名大小写不敏感；变量/参数名大小写敏感；`a`/`A` 允许；`point2`/`point3`/`any`/`callable`/`void` 等为保留名；`def Foo` 遇变量 `foo` 是 S003。
 - **宿主 runtime**：`CallContext`/`CommandContext` 带非拥有 `EvalContext*`；`FunctionHandler` 直接收 `EvalContext&`；runtime 缺失报 R010；宿主不得保存。
 - **编辑器分析（M10 计划）**：严格 Lexer 继续首错中止；宿主高亮使用独立的 best-effort token/trivia/error span 接口，不要求完整 AST，不把 Qt 引入 core。

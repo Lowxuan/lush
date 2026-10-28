@@ -2,9 +2,9 @@
 
 一个面向「命令行 + GUI 深度融合」的嵌入式命令语言与命令执行框架。
 
-- 语言规范：[docs/spec.md](docs/spec.md)（0.4.0；M7 已实现，M8–M11 规划）
-- 开发里程碑：[docs/steps.md](docs/steps.md)（M1–M7 已完成，M8–M11 计划）
-- 当前状态：**M7 已完成，M8–M11 已规划**（M1 词法 + M2 AST/Parser + M3 求值/内建 + M4 命令系统/参考宿主 + M5 会话/REPL/脚本执行 + M6 补全核心与 `read` + M7 数值字符串；M8 计划引入 `Env` 函数表/Source 表、`TypeToken`、用户函数和 `CompletionScope`；CLI Tab、编辑器分析和两份用户文档见 `docs/steps.md`）
+- 语言规范：[docs/spec.md](docs/spec.md)（0.4.0；M7/M8a 已实现，M8b–M11 规划）
+- 开发里程碑：[docs/steps.md](docs/steps.md)（M1–M8a 已完成，M8b–M11 计划）
+- 当前状态：**M8a 已完成，M8b–M11 已规划**（M1 词法 + M2 AST/Parser + M3 求值/内建 + M4 命令系统/参考宿主 + M5 会话/REPL/脚本执行 + M6 补全核心与 `read` + M7 数值字符串 + M8a 用户函数语法/静态校验与 `TypeToken`；用户函数运行、CLI Tab、编辑器分析和两份用户文档见 `docs/steps.md`）
 
 ## 环境
 
@@ -54,5 +54,5 @@ ctest --test-dir build -C Debug --output-on-failure
 - `src/cli/`：命令行前端（REPL、脚本、`-e`、dump；M9 接 replxx）
 - `third_party/replxx/`：M9 计划中的 vendored CLI 行编辑依赖
 - `examples/`：M10/M11 的宿主和文档示例
-- `tests/`：单元测试（M3–M7 golden/单元测试已落地；`lush_tests` 223 个测试）
+- `tests/`：单元测试（M3–M8a golden/单元测试已落地；`lush_tests` 230 个测试）
 - `docs/language.md`、`docs/embedding.md`：M11 计划交付的两份用户文档

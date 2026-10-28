@@ -77,6 +77,9 @@ inline ScriptResult runScriptWithCatalog(
         return ScriptResult{std::move(source), {}, std::move(parsed.diagnostic)};
     }
 
+    if (options.env == nullptr) {
+        options.env = &env;
+    }
     ValidationResult validation =
         validate(*parsed.program, catalog, options);
     if (validation.diagnostic) {

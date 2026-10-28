@@ -14,14 +14,14 @@
 | M5 会话 / REPL | ✅ 已完成 | Session、Driver、SourceId/SourceTable、脚本/REPL CLI |
 | M6 补全 | ✅ 已完成 | 补全核心、类型过滤、`returnType`、参考宿主 `read`；CLI Tab 移至 M9 |
 | M7 数值字符串 | ✅ 已完成 | `int(string)` / `double(string)`、R013、严格解析 |
-| M8a 函数语法 | ⬜ 计划 | `def`/`return`、`->`、类型注解、AST、Parser、静态校验 |
+| M8a 函数语法 | ✅ 已完成 | `def`/`return`、`->`、类型注解、AST、Parser、静态校验 |
 | M8b 函数运行时 | ⬜ 计划 | 用户函数值、Source/AST 所有权、作用域、return、递归、REPL |
 | M8c 函数工具链 | ⬜ 计划 | 用户函数签名、补全、类型注解补全、REPL 诊断 |
 | M9 CLI Tab | ⬜ 计划 | vendored replxx、行编辑/历史/补全、Windows 实测 |
 | M10 编辑器/宿主 API | ⬜ 计划 | trivia、best-effort token、公开宿主 API、QSyntaxHighlighter 示例 |
 | M11 用户文档 | ⬜ 计划 | 语言使用简述、宿主集成说明、可编译示例 |
 
-M1–M7 已完成。`lush_tests` 当前 223 个测试，CTest 目标为 `lush_tests`、`lush_version`、`lush_dump_tokens`、`lush_dump_ast`、`lush_eval`。M8–M11 的语义目标见 `docs/spec.md` 0.4.0；实现顺序按本文执行，不得提前声称后续功能已可用。
+M1–M7 已完成，M8a 已完成。`lush_tests` 当前 230 个测试，CTest 目标为 `lush_tests`、`lush_version`、`lush_dump_tokens`、`lush_dump_ast`、`lush_eval`。M8b–M11 的语义目标见 `docs/spec.md` 0.4.0；实现顺序按本文执行，不得提前声称后续功能已可用。
 
 ---
 
@@ -731,7 +731,7 @@ BoundaryInt @...
 
 ---
 
-## M8a — 用户函数：语法、类型与静态结构（计划）
+## M8a — 用户函数：语法、类型与静态结构（已完成）
 
 **目标**：完成 `def` / `return` 的语法、AST、函数签名/TypeToken 模型和静态校验，不执行函数体。
 
@@ -771,17 +771,26 @@ def f() { ... }
 - `S007` 不再产生；新增 S010/S011/S012 的诊断位置和测试。
 - 顶层 `def` 收集后按顺序安装到 `Env` 的 `FunctionTable`；同一脚本重复定义同名函数 → S011；REPL 重定义允许替换（运行时 M8b 完成）。
 
+**实现结果**
+
+- Lexer/Arrow、Def/Return AST、函数参数/类型注解、Parser/Incomplete、AST dump 已完成。
+- `FunctionSignature`、`FunctionTable`（Env 级签名表）、`ValueType::TypeToken`、`callable` token 已实现。
+- 两遍校验、S010/S011/S012、名称/类型冲突、脚本/REPL 重定义和现有 Env 变量/函数冲突已落地。
+- `lush_tests` 增至 230 个；G42/type 相关测试更新为 `callable` token。
+
 **文件**
 
-- `src/lush/core/token.h`、`lexer.h/.cpp`
+- `src/lush/core/token.h`、`lexer.h/.cpp`（`Arrow`、comment spans）
 - `src/lush/core/ast.h/.cpp`
 - `src/lush/core/parser.h/.cpp`
 - `src/lush/core/validate.h/.cpp`
-- `src/lush/core/value.h/.cpp`（`ValueType::TypeToken`、函数签名类型）
-- `src/lush/core/cell.h`（`FunctionTable` 挂接点）
-- `src/lush/core/eval.h`（预声明接口）
-- `tests/unit_lexer.cpp`、`unit_parser.cpp`、`unit_eval.cpp`、`golden_spec.cpp`
-- `src/cli/main.cpp` 的 `--dump-ast` 输出
+- `src/lush/core/value.h/.cpp`（`ValueType::TypeToken`）
+- `src/lush/core/function_table.h`（函数签名表）
+- `src/lush/core/cell.h`（`Env`/`FunctionTable`）
+- `src/lush/core/builtins.cpp`、`eval.cpp`、`format.cpp`、`diagnostic.h/.cpp`
+- `src/lush/driver/driver.h/.cpp`（REPL 重定义校验选项）
+- `src/lush/completion/completion.cpp`（`type` 静态元数据）
+- `tests/unit_lexer.cpp`、`unit_parser.cpp`、`unit_eval.cpp`、`unit_value.cpp`、`unit_ref.cpp`、`golden_spec.cpp`
 - 文档同步
 
 **测试**
@@ -801,7 +810,7 @@ def f() { ... }
 - 尚未执行函数体时，相关测试可只验证解析/校验；
 - `S007` 相关旧测试迁移到 S010/S011/S012；
 - `type` G42 等旧 golden 的 `type(int)==type` 断言迁移到 `callable` token；
-- 不提前修改 REPL 行为；M8b 再接执行。
+- 已完成；Debug/Release/Werror/Ninja 全绿；M8b 再接执行。
 
 ---
 
@@ -854,7 +863,7 @@ def f() { ... }
 
 - 函数定义不悬空；REPL 多次调用稳定；
 - 错误码、Span、Source 正确；函数体 Source 与调用点 Source 不混用；
-- 现有 223 个测试不回归；
+- 现有 230 个测试不回归；
 - Debug / Release / Werror / Ninja 全绿。
 
 ---
@@ -1084,5 +1093,5 @@ def f() { ... }
 - `Env` 持有 `FunctionTable` 和 `SourceTable`；Source 保留到 `Env` 销毁；函数值必须拥有 AST 和 Source，SourceId 只做诊断/查询。
 - `callable` 是 `ValueType::TypeToken`，不是 invocable callable；`type(任意 invocable callable) == callable`。
 - 补全使用只读 `CompletionScope`，不修改真实 `Env`，不暴露调用点局部。
-- 测试基线：M7 结束 223 个测试；每个里程碑结束时更新实际数量，不固定提前写死。
+- 测试基线：M8a 结束 230 个测试；每个里程碑结束时更新实际数量，不固定提前写死。
 - 建议验收顺序：M7 → M8a → M8b → M8c → M9 → M10 → M11；需要并行时只能并行文档整理和纯测试设计，不能跨语义门禁合并实现。

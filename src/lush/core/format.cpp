@@ -143,6 +143,8 @@ std::string formatValueNested(const Value& value) {
     }
     case ValueType::Callable:
         return formatCallable(value);
+    case ValueType::TypeToken:
+        return "callable";
     }
 
     return "unknown";

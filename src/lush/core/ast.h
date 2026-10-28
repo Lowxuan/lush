@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -14,6 +15,48 @@ struct Name {
     std::string text;
     Span span{};
 };
+
+enum class TypeKind {
+    Int,
+    Double,
+    Bool,
+    String,
+    List,
+    Point,
+    Point2,
+    Point3,
+    Any,
+    Callable,
+    Void,
+    Unknown,
+};
+
+struct TypeAnnotation {
+    TypeKind kind = TypeKind::Unknown;
+    std::string text;
+    Span span{};
+};
+
+struct FunctionParam {
+    Name name;
+    std::optional<TypeAnnotation> type;
+    Span span{};
+};
+
+struct FunctionSignature {
+    Name name;
+    std::vector<FunctionParam> params;
+    std::optional<TypeAnnotation> returnType;
+    Span span{};
+
+    bool returnsValue() const noexcept {
+        return returnType.has_value() && returnType->kind != TypeKind::Void;
+    }
+};
+
+std::optional<TypeKind> typeKindFromName(std::string_view name) noexcept;
+std::string_view typeKindName(TypeKind kind) noexcept;
+bool isReservedTypeName(std::string_view name) noexcept;
 
 enum class UnaryOp {
     Negate,
@@ -53,6 +96,8 @@ enum class NodeKind {
     Assign,
     RefAssign,
     Command,
+    Def,
+    Return,
     EmptyStmt,
     Int,
     BoundaryInt,
@@ -87,6 +132,8 @@ struct Continue;
 struct Assign;
 struct RefAssign;
 struct Command;
+struct Def;
+struct Return;
 struct EmptyStmt;
 struct Int;
 struct BoundaryInt;
@@ -120,6 +167,8 @@ public:
     virtual void visit(const Assign&) {}
     virtual void visit(const RefAssign&) {}
     virtual void visit(const Command&) {}
+    virtual void visit(const Def&) {}
+    virtual void visit(const Return&) {}
     virtual void visit(const EmptyStmt&) {}
     virtual void visit(const Int&) {}
     virtual void visit(const BoundaryInt&) {}
@@ -311,6 +360,19 @@ struct Command : Stmt {
     std::vector<ExprPtr> args;
     void accept(AstVisitor& visitor) const override { visitor.visit(*this); }
     NodeKind kind() const noexcept override { return NodeKind::Command; }
+};
+
+struct Def : Stmt {
+    FunctionSignature signature;
+    StmtPtr body;
+    void accept(AstVisitor& visitor) const override { visitor.visit(*this); }
+    NodeKind kind() const noexcept override { return NodeKind::Def; }
+};
+
+struct Return : Stmt {
+    ExprPtr value;
+    void accept(AstVisitor& visitor) const override { visitor.visit(*this); }
+    NodeKind kind() const noexcept override { return NodeKind::Return; }
 };
 
 struct EmptyStmt : Stmt {

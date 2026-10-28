@@ -8,6 +8,19 @@
 namespace lush::core {
 namespace {
 
+std::string asciiLower(std::string_view text) {
+    std::string result;
+    result.reserve(text.size());
+    for (char character : text) {
+        if (character >= 'A' && character <= 'Z') {
+            result.push_back(static_cast<char>(character - 'A' + 'a'));
+        } else {
+            result.push_back(character);
+        }
+    }
+    return result;
+}
+
 std::string escapeString(std::string_view text) {
     std::string escaped;
     escaped.reserve(text.size());
@@ -136,6 +149,35 @@ public:
         header("Command name=\"" + escapeString(node.name.text) + "\"", node.span);
         for (const ExprPtr& arg : node.args) {
             child(arg.get());
+        }
+    }
+
+    void visit(const Def& node) override {
+        std::string text = "Def name=\"" + escapeString(node.signature.name.text) +
+                           "\"";
+        for (const FunctionParam& param : node.signature.params) {
+            text += " param=\"" + escapeString(param.name.text);
+            if (param.type) {
+                text += ":";
+                text += typeKindName(param.type->kind);
+            }
+            text += "\"";
+        }
+        if (node.signature.returnType) {
+            text += " return=\"";
+            text += typeKindName(node.signature.returnType->kind);
+            text += "\"";
+        }
+        header(text, node.span);
+        child("body", node.body.get());
+    }
+
+    void visit(const Return& node) override {
+        header("Return", node.span);
+        if (node.value) {
+            child("value", node.value.get());
+        } else {
+            none("value");
         }
     }
 
@@ -286,6 +328,44 @@ private:
 };
 
 } // namespace
+
+std::optional<TypeKind> typeKindFromName(std::string_view name) noexcept {
+    const std::string lower = asciiLower(name);
+    if (lower == "int") return TypeKind::Int;
+    if (lower == "double") return TypeKind::Double;
+    if (lower == "bool") return TypeKind::Bool;
+    if (lower == "string") return TypeKind::String;
+    if (lower == "list") return TypeKind::List;
+    if (lower == "point") return TypeKind::Point;
+    if (lower == "point2") return TypeKind::Point2;
+    if (lower == "point3") return TypeKind::Point3;
+    if (lower == "any") return TypeKind::Any;
+    if (lower == "callable") return TypeKind::Callable;
+    if (lower == "void") return TypeKind::Void;
+    return std::nullopt;
+}
+
+std::string_view typeKindName(TypeKind kind) noexcept {
+    switch (kind) {
+    case TypeKind::Int: return "int";
+    case TypeKind::Double: return "double";
+    case TypeKind::Bool: return "bool";
+    case TypeKind::String: return "string";
+    case TypeKind::List: return "list";
+    case TypeKind::Point: return "point";
+    case TypeKind::Point2: return "point2";
+    case TypeKind::Point3: return "point3";
+    case TypeKind::Any: return "any";
+    case TypeKind::Callable: return "callable";
+    case TypeKind::Void: return "void";
+    case TypeKind::Unknown: return "unknown";
+    }
+    return "unknown";
+}
+
+bool isReservedTypeName(std::string_view name) noexcept {
+    return typeKindFromName(name).has_value();
+}
 
 std::string_view unaryOpName(UnaryOp op) noexcept {
     switch (op) {

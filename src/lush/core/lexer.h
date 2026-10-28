@@ -15,6 +15,7 @@ struct LexResult {
     static constexpr std::size_t npos = static_cast<std::size_t>(-1);
 
     std::vector<Token> tokens;
+    std::vector<Span> comments;
     std::optional<Diagnostic> diagnostic;
     bool endsWithContinuation = false;
     std::size_t lastContinuationOffset = npos;
@@ -54,6 +55,7 @@ private:
     std::string logical_;
     std::vector<std::size_t> map_;
     std::vector<Token> tokens_;
+    std::vector<Span> comments_;
     std::size_t pos_ = 0;
     std::size_t depth_ = 0;
     std::size_t lastContinuationOffset_ = LexResult::npos;

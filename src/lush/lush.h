@@ -7,6 +7,7 @@
 #include "lush/core/diagnostic.h"
 #include "lush/core/eval.h"
 #include "lush/core/format.h"
+#include "lush/core/function_table.h"
 #include "lush/core/lexer.h"
 #include "lush/core/output.h"
 #include "lush/core/parser.h"

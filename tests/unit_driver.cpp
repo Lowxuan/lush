@@ -162,6 +162,29 @@ LUSH_TEST(driver_multiline_block) {
     LUSH_CHECK_EQ(fixture.output.text(), std::string("2\n"));
 }
 
+LUSH_TEST(driver_def_pending_and_semicolon) {
+    ReferenceFixture fixture;
+    LUSH_CHECK(isStatus(fixture.driver.feedLine("def f()"),
+                        DriverStatus::NeedMore));
+    LUSH_CHECK(isStatus(fixture.driver.feedLine(";"), DriverStatus::Done));
+    LUSH_CHECK(fixture.env.functions().contains("f"));
+
+    LUSH_CHECK(isStatus(fixture.driver.feedLine("def g()"),
+                        DriverStatus::NeedMore));
+    const DriverResult cancelled = fixture.driver.feedLine("");
+    LUSH_CHECK(isStatus(cancelled, DriverStatus::Cancelled));
+    LUSH_CHECK_EQ(static_cast<int>(cancelled.cancelReason),
+                  static_cast<int>(CancelReason::PendingInput));
+    LUSH_CHECK(!fixture.env.functions().contains("g"));
+
+    LUSH_CHECK(isStatus(fixture.driver.feedLine("def h()"),
+                        DriverStatus::NeedMore));
+    LUSH_CHECK(isStatus(fixture.driver.feedLine("# comment"),
+                        DriverStatus::NeedMore));
+    LUSH_CHECK(isStatus(fixture.driver.feedLine(";"), DriverStatus::Done));
+    LUSH_CHECK(fixture.env.functions().contains("h"));
+}
+
 LUSH_TEST(driver_pending_blank_cancels) {
     ReferenceFixture fixture;
     LUSH_CHECK(isStatus(fixture.driver.feedLine("if (true)"),

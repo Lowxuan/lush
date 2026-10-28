@@ -143,7 +143,7 @@ LUSH_TEST(ref_to_callable) {
     const auto result = runScript(
         env, "f = int\nh = ref f\necho h\necho type(h)\nf = double\n"
              "echo h\n");
-    expectOutput(result, "int\ntype\ndouble\n");
+    expectOutput(result, "int\ncallable\ndouble\n");
 }
 
 LUSH_TEST(ref_write_through_point) {

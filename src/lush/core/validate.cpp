@@ -1,10 +1,13 @@
 #include "lush/core/validate.h"
 
 #include "lush/core/builtins.h"
+#include "lush/core/cell.h"
+#include "lush/core/function_table.h"
 
 #include <cstddef>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 
 namespace lush::core {
 namespace {
@@ -15,7 +18,10 @@ public:
         : names_(names), options_(options) {}
 
     ValidationResult run(const Program& program) {
-        validateNode(program);
+        collectFunctions(program);
+        if (!error_) {
+            validateNode(program);
+        }
         return ValidationResult{std::move(error_)};
     }
 
@@ -33,7 +39,91 @@ private:
     }
 
     bool reserved(std::string_view name) const {
-        return names_.isReserved(name);
+        return names_.isReserved(name) || isReservedTypeName(name) ||
+               functions_.contains(name);
+    }
+
+    bool reservedParam(std::string_view name) const {
+        return names_.isReserved(name) || isReservedTypeName(name) ||
+               functions_.contains(name);
+    }
+
+    const FunctionSignature* userFunction(std::string_view name) const {
+        return functions_.find(name);
+    }
+
+    bool sameName(std::string_view left, std::string_view right) const {
+        return detail::functionKey(left) == detail::functionKey(right);
+    }
+
+    bool hasVisibleVariable(std::string_view name) const {
+        if (options_.env == nullptr) {
+            return false;
+        }
+        for (const std::string& variable : options_.env->visibleNames()) {
+            if (sameName(variable, name)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void collectFunctions(const Program& program) {
+        if (options_.env != nullptr) {
+            for (const FunctionSignature& existing :
+                 options_.env->functions().signatures()) {
+                functions_.insert(existing, true);
+            }
+        }
+
+        for (const StmtPtr& statement : program.statements) {
+            if (statement->kind() == NodeKind::Def) {
+                functions_.insert(
+                    static_cast<const Def&>(*statement).signature, true);
+            }
+        }
+    }
+
+    void validateTypeAnnotation(const TypeAnnotation& type, bool parameter) {
+        if (type.kind == TypeKind::Unknown) {
+            fail(ErrorCode::S011, type.span, "未知类型 " + type.text);
+            return;
+        }
+        if (parameter && type.kind == TypeKind::Void) {
+            fail(ErrorCode::S011, type.span, "void 不能作为参数类型");
+        }
+    }
+
+    void validateSignature(const FunctionSignature& signature) {
+        if (error_) {
+            return;
+        }
+        std::unordered_set<std::string> names;
+        for (const FunctionParam& param : signature.params) {
+            if (error_) {
+                return;
+            }
+            if (reservedParam(param.name.text)) {
+                fail(ErrorCode::S011, param.name.span,
+                     "参数名不能使用保留名");
+                return;
+            }
+            if (sameName(param.name.text, signature.name.text)) {
+                fail(ErrorCode::S011, param.name.span,
+                     "参数名不能和函数名相同");
+                return;
+            }
+            if (!names.insert(param.name.text).second) {
+                fail(ErrorCode::S011, param.name.span, "参数名重复");
+                return;
+            }
+            if (param.type) {
+                validateTypeAnnotation(*param.type, true);
+            }
+        }
+        if (signature.returnType) {
+            validateTypeAnnotation(*signature.returnType, false);
+        }
     }
 
     const Name* rootName(const Expr& expression) const {
@@ -101,6 +191,17 @@ private:
             return;
         case NodeKind::Variable: {
             const auto& variable = static_cast<const Variable&>(expression);
+            if (sameName(variable.name.text, "callable")) {
+                return;
+            }
+            if (const FunctionSignature* function =
+                    userFunction(variable.name.text)) {
+                if (!function->returnsValue()) {
+                    fail(ErrorCode::S012, variable.name.span,
+                         "void 函数没有值形态");
+                }
+                return;
+            }
             if (names_.isCommand(variable.name.text)) {
                 fail(ErrorCode::S008, variable.name.span,
                      "命令没有值形态");
@@ -126,6 +227,19 @@ private:
         }
         case NodeKind::Call: {
             const auto& call = static_cast<const Call&>(expression);
+            if (call.callee->kind() == NodeKind::Variable) {
+                const auto& callee = static_cast<const Variable&>(*call.callee);
+                if (const FunctionSignature* function =
+                        userFunction(callee.name.text)) {
+                    if (!function->returnsValue()) {
+                        fail(ErrorCode::S012, callee.name.span,
+                             "void 函数不能用于表达式");
+                    } else if (function->params.size() != call.args.size()) {
+                        fail(ErrorCode::R002, call.lparenSpan,
+                             "参数个数不符");
+                    }
+                }
+            }
             validateExpr(*call.callee);
             for (const ExprPtr& argument : call.args) {
                 validateExpr(*argument);
@@ -186,26 +300,34 @@ private:
         }
         case NodeKind::Block: {
             const auto& block = static_cast<const Block&>(statement);
+            ++nestingDepth_;
             for (const StmtPtr& child : block.statements) {
                 validateNode(*child);
             }
+            --nestingDepth_;
             return;
         }
         case NodeKind::If: {
             const auto& ifStatement = static_cast<const If&>(statement);
             validateExpr(*ifStatement.cond);
+            ++nestingDepth_;
             validateNode(*ifStatement.thenBranch);
+            --nestingDepth_;
             if (ifStatement.elseBranch) {
+                ++nestingDepth_;
                 validateNode(*ifStatement.elseBranch);
+                --nestingDepth_;
             }
             return;
         }
         case NodeKind::While: {
             const auto& whileStatement = static_cast<const While&>(statement);
             validateExpr(*whileStatement.cond);
+            ++nestingDepth_;
             ++loopDepth_;
             validateNode(*whileStatement.body);
             --loopDepth_;
+            --nestingDepth_;
             return;
         }
         case NodeKind::ForIn: {
@@ -216,9 +338,11 @@ private:
                 return;
             }
             validateExpr(*forIn.iterable);
+            ++nestingDepth_;
             ++loopDepth_;
             validateNode(*forIn.body);
             --loopDepth_;
+            --nestingDepth_;
             return;
         }
         case NodeKind::For: {
@@ -233,9 +357,11 @@ private:
             if (forStatement.step) {
                 validateExpr(*forStatement.step);
             }
+            ++nestingDepth_;
             ++loopDepth_;
             validateNode(*forStatement.body);
             --loopDepth_;
+            --nestingDepth_;
             return;
         }
         case NodeKind::Break:
@@ -245,6 +371,85 @@ private:
                      "break/continue 不在循环内");
             }
             return;
+        case NodeKind::Def: {
+            const auto& def = static_cast<const Def&>(statement);
+            if (nestingDepth_ != 0 || functionDepth_ != 0) {
+                fail(ErrorCode::S011, def.signature.name.span,
+                     "def 只允许出现在程序顶层");
+                return;
+            }
+            const bool existing =
+                options_.env != nullptr &&
+                options_.env->functions().contains(def.signature.name.text);
+            if (existing && !options_.allowFunctionRedefinition) {
+                fail(ErrorCode::S011, def.signature.name.span,
+                     "用户函数已存在");
+                return;
+            }
+            if (hasVisibleVariable(def.signature.name.text)) {
+                fail(ErrorCode::S003, def.signature.name.span,
+                     "函数名与已有变量冲突");
+                return;
+            }
+            if (names_.isReserved(def.signature.name.text) ||
+                isReservedTypeName(def.signature.name.text)) {
+                fail(ErrorCode::S011, def.signature.name.span,
+                     "函数名不能使用保留名");
+                return;
+            }
+            const std::string functionKey =
+                detail::functionKey(def.signature.name.text);
+            if (!seenFunctions_.insert(functionKey).second &&
+                !options_.allowFunctionRedefinition) {
+                fail(ErrorCode::S011, def.signature.name.span,
+                     "同名用户函数重复定义");
+                return;
+            }
+            validateSignature(def.signature);
+            if (error_) {
+                return;
+            }
+            const std::optional<TypeAnnotation> previousReturn =
+                currentReturnType_;
+            const int previousFunctionDepth = functionDepth_;
+            const int previousNestingDepth = nestingDepth_;
+            const int previousLoopDepth = loopDepth_;
+            currentReturnType_ = def.signature.returnType;
+            ++functionDepth_;
+            nestingDepth_ = 1;
+            loopDepth_ = 0;
+            validateNode(*def.body);
+            currentReturnType_ = previousReturn;
+            functionDepth_ = previousFunctionDepth;
+            nestingDepth_ = previousNestingDepth;
+            loopDepth_ = previousLoopDepth;
+            return;
+        }
+        case NodeKind::Return: {
+            const auto& returnStatement = static_cast<const Return&>(statement);
+            if (functionDepth_ == 0) {
+                fail(ErrorCode::S010, returnStatement.span,
+                     "return 只能出现在函数体内");
+                return;
+            }
+            const bool valueFunction =
+                currentReturnType_.has_value() &&
+                currentReturnType_->kind != TypeKind::Void;
+            if (returnStatement.value && !valueFunction) {
+                fail(ErrorCode::S012, returnStatement.span,
+                     "void 函数不能返回值");
+                return;
+            }
+            if (!returnStatement.value && valueFunction) {
+                fail(ErrorCode::S012, returnStatement.span,
+                     "值函数必须返回表达式");
+                return;
+            }
+            if (returnStatement.value) {
+                validateExpr(*returnStatement.value);
+            }
+            return;
+        }
         case NodeKind::Assign: {
             const auto& assign = static_cast<const Assign&>(statement);
             validateWriteTarget(*assign.target);
@@ -261,6 +466,18 @@ private:
         }
         case NodeKind::Command: {
             const auto& command = static_cast<const Command&>(statement);
+            if (const FunctionSignature* function =
+                    userFunction(command.name.text)) {
+                if (command.args.size() != function->params.size()) {
+                    fail(ErrorCode::S002, command.name.span,
+                         "参数个数不符");
+                    return;
+                }
+                for (const ExprPtr& argument : command.args) {
+                    validateExpr(*argument);
+                }
+                return;
+            }
             const std::optional<CallableInfo> info =
                 names_.callableInfo(command.name.text);
             if (!info) {
@@ -303,7 +520,12 @@ private:
     const NameCatalog& names_;
     ValidationOptions options_;
     std::optional<Diagnostic> error_;
+    FunctionTable functions_;
+    std::unordered_set<std::string> seenFunctions_;
+    std::optional<TypeAnnotation> currentReturnType_;
     int loopDepth_ = 0;
+    int functionDepth_ = 0;
+    int nestingDepth_ = 0;
 };
 
 } // namespace

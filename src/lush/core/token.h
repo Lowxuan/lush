@@ -41,6 +41,7 @@ enum class TokenKind {
     Dot,
 
     Assign,
+    Arrow,
     Equal,
     NotEqual,
     Less,
@@ -92,6 +93,7 @@ constexpr std::string_view tokenKindName(TokenKind kind) noexcept {
     case TokenKind::Question: return "QUESTION";
     case TokenKind::Dot: return "DOT";
     case TokenKind::Assign: return "ASSIGN";
+    case TokenKind::Arrow: return "ARROW";
     case TokenKind::Equal: return "EQ";
     case TokenKind::NotEqual: return "NE";
     case TokenKind::Less: return "LT";

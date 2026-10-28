@@ -91,6 +91,18 @@ LUSH_TEST(value_callable_identity) {
     LUSH_CHECK(value != Value::makeCallable(catalog.findCallable("len")));
 }
 
+LUSH_TEST(value_type_token) {
+    const Value token = Value::makeTypeToken();
+    LUSH_CHECK(token.isTypeToken());
+    LUSH_CHECK(!token.isCallable());
+    LUSH_CHECK(token.type() == ValueType::TypeToken);
+    LUSH_CHECK_EQ(std::string(valueTypeName(token.type())),
+                  std::string("callable"));
+    LUSH_CHECK_EQ(formatValue(token), "callable");
+    LUSH_CHECK_EQ(formatValueNested(token), "callable");
+    LUSH_CHECK(token == Value::makeTypeToken());
+}
+
 LUSH_TEST(value_equality) {
     LUSH_CHECK(Value::makeInt(1) == Value::makeDouble(1.0));
     LUSH_CHECK(Value::makeInt(1) != Value::makeDouble(1.5));

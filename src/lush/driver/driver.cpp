@@ -153,7 +153,8 @@ DriverResult Driver::finishSession() {
 }
 
 DriverResult Driver::processParsed(core::Program& program,
-                                  core::SourceId sourceId) {
+                                  core::SourceId sourceId,
+                                  bool allowFunctionRedefinition) {
     const core::Command* command = nullptr;
     const bool single = isSingleTopLevelCommand(program, command);
 
@@ -165,8 +166,10 @@ DriverResult Driver::processParsed(core::Program& program,
                        command->args.size() < info->required;
     }
 
-    core::ValidationResult validation =
-        core::validate(program, registry_, core::ValidationOptions{allowSession});
+    core::ValidationResult validation = core::validate(
+        program, registry_,
+        core::ValidationOptions{allowSession, allowFunctionRedefinition,
+                                &env_});
     if (validation.diagnostic) {
         return makeError(std::move(validation.diagnostic), sourceId, false);
     }
@@ -266,7 +269,7 @@ DriverResult Driver::parsePendingBuffer() {
     const core::SourceId sourceId = sources_.add(text);
     pendingBuffer_.clear();
     pendingReason_.reset();
-    return processParsed(*parsed.program, sourceId);
+    return processParsed(*parsed.program, sourceId, true);
 }
 
 DriverResult Driver::processSessionLine(std::string_view line) {
@@ -399,7 +402,8 @@ DriverResult Driver::runScript(std::string text) {
     }
 
     core::ValidationResult validation =
-        core::validate(*parsed.program, registry_);
+        core::validate(*parsed.program, registry_,
+                       core::ValidationOptions{false, false, &env_});
     if (validation.diagnostic) {
         return clearTerminalState(
             makeError(std::move(validation.diagnostic), sourceId, false));

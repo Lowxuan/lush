@@ -300,8 +300,8 @@ std::vector<CallableDescriptor> builtinDescriptors() {
         "point", {}, {anyParam("v")}, true, true,
         ReturnType{ValueType::Point, 0}, true, "构造 Point"));
     result.push_back(makeBuiltin(
-        "type", {}, {anyParam("v")}, false, true,
-        ReturnType{ValueType::Callable, 0}, false, "返回类型构造器"));
+        "type", {}, {anyParam("v")}, false, true, std::nullopt, false,
+        "返回类型构造器"));
     result.push_back(makeBuiltin(
         "len", {}, {anyParam("v")}, false, true,
         ReturnType{ValueType::Int, 0}, false, "返回长度"));
